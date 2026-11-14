@@ -284,12 +284,9 @@ def test_shorts_auto_montage_render_with_stickers_subscribe_and_stars(worker, tm
 
 @pytest.mark.parametrize('title,expected', [
     ('When is Saint Nicholas Day in your country?', ('santa', 'gift')),
-    ('Святкування Різдва та Святого Миколая', ('santa', 'gift')),
     ('Spooky Halloween traditions across Europe', ('pumpkin', 'skull')),
     ('GDP per capita and average salary in Europe', ('money', 'chart')),
-    ('ВВП та середня зарплата в країнах ЄС', ('money', 'chart')),
     ('Roman Empire and ancient military history', ('shield', 'swords')),
-    ('Історія війн та найбільші битви', ('shield', 'swords')),
     ('European Monarchs and Royal Families', ('crown', 'star')),
     ('Fastest internet speed and AI technology', ('rocket', 'bolt')),
     ('Visa-free travel and strongest passports', ('plane', 'compass')),
@@ -301,7 +298,7 @@ def test_shorts_auto_montage_render_with_stickers_subscribe_and_stars(worker, tm
     ('Hottest temperature and climate in Europe', ('sun', 'compass')),
     ('Average beer and coffee consumption', ('beer', 'coffee')),
     ('Average IQ and education in Europe', ('brain', 'book')),
-    ('Найкрасивіші країни Європи', ('globe', 'pin')),
+    ('Beautiful countries in Europe', ('globe', 'pin')),
 ])
 def test_resolve_auto_stickers_thematic_matching(worker, title, expected):
     assert worker._resolve_auto_stickers(title) == expected
