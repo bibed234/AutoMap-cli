@@ -92,13 +92,13 @@ def test_portrait_render_with_centered_title_and_right_aligned_map(worker, tmp_p
         frame = result.get_frame(.5)
     green = (frame[:, :, 1] > 220) & (frame[:, :, 0] < 30)
     ys, xs = np.where(green)
-    assert xs.max() >= 1078  # Map artwork reaches the right edge, including with a shadow.
-    assert (xs.max() - xs.min()) / (ys.max() - ys.min()) == pytest.approx(map_size[0] / map_size[1], abs=.03)
-    assert ys.max() <= 1761
+    assert abs((xs.min() + xs.max()) / 2 - 540) < 3
+    assert ys.max() <= 1865
     if map_size[1] > map_size[0]:
-        assert ys.max() - ys.min() > 1200
+        assert (xs.max() - xs.min()) / (ys.max() - ys.min()) == pytest.approx(map_size[0] / map_size[1], abs=.03)
+        assert ys.max() - ys.min() > 1350
     else:
-        assert xs.max() - xs.min() >= 1000
+        assert xs.min() == 0 and xs.max() - xs.min() >= 1078
     white = np.all(frame > 220, axis=2)
     title_y, title_x = np.where(white)
     assert 70 <= title_y.min() < 150
@@ -106,7 +106,8 @@ def test_portrait_render_with_centered_title_and_right_aligned_map(worker, tmp_p
     mint_y, _ = np.where(mint)
     assert len(mint_y) > 100
     assert mint_y.min() > title_y.max()
-    assert 15 < ys.min() - mint_y.max() < 70
+    if map_size[1] <= map_size[0]:
+        assert ys.min() > mint_y.max() + 50
     assert abs((title_x.min() + title_x.max()) / 2 - 540) < 8
 
 
@@ -229,7 +230,7 @@ def test_branded_render_reserves_footer_and_keeps_logo_transparency(worker, tmp_
         frame = result.get_frame(.1)
     green_y, _ = np.where((frame[:, :, 1] > 220) & (frame[:, :, 0] < 30))
     logo_y, logo_x = np.where((frame[:, :, 0] > 220) & (frame[:, :, 2] > 220) & (frame[:, :, 1] < 50))
-    assert green_y.max() < 1451
+    assert green_y.max() < 1535
     assert 1470 <= logo_y.min() < logo_y.max() < 1701
     assert abs((logo_x.min() + logo_x.max()) / 2 - 540) < 2
     # Transparent corners show the background, not an opaque logo rectangle.
@@ -302,8 +303,10 @@ def test_shorts_auto_montage_render_with_stickers_subscribe_and_stars(worker, tm
     # Map green pixels are positioned below the title + subscribe pill and above the footer
     green_y, _ = np.where((frame_mid[:, :, 1] > 210) & (frame_mid[:, :, 0] < 40))
     assert len(green_y) > 100
-    assert green_y.min() > 380
-    assert green_y.max() < 1460
+    assert green_y.min() > 250
+    assert green_y.max() < 1740
+    green_x = np.where((frame_mid[:, :, 1] > 210) & (frame_mid[:, :, 0] < 40))[1]
+    assert abs((green_x.min() + green_x.max()) / 2 - 540) < 3
     # Footer has both watermark text and the 3 stars row below y=1690
     footer_bright = np.all(frame_mid[1690:1900, :, :] > 200, axis=2)
     assert np.count_nonzero(footer_bright) > 100
@@ -396,9 +399,11 @@ def test_custom_subscribe_stars_and_top_sticker_images_render(worker, tmp_path, 
     with VideoFileClip(response.json['file_path']) as result:
         frame = result.get_frame(0.5)
 
-    # Top-left custom cyan sticker is rendered near the top-left slot
-    cyan_top = (frame[:200, :350, 1] > 210) & (frame[:200, :350, 2] > 210) & (frame[:200, :350, 0] < 50)
+    # Stickers stay at the top above the headline and subscribe badge.
+    cyan_top = (frame[:220, 120:320, 1] > 210) & (frame[:220, 120:320, 2] > 210) & (frame[:220, 120:320, 0] < 50)
     assert np.count_nonzero(cyan_top) > 200
+    cyan_y, _ = np.where(cyan_top)
+    assert cyan_y.min() == pytest.approx(20 + 24, abs=3)
 
     # Custom magenta subscribe badge is rendered below the title and shifts map down
     magenta = (frame[:, :, 0] > 210) & (frame[:, :, 2] > 210) & (frame[:, :, 1] < 50)

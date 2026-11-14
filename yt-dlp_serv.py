@@ -1486,11 +1486,12 @@ def make_video() -> tuple[object, int]:
             uppercase=title_uppercase,
         )
         map_clip = ImageClip(map_path).with_duration(bg_duration)
-        title_top = 175 if has_top_stickers else 70
+        title_top = 176 if has_top_stickers else 70
         gap = 16
 
         subscribe_clip = None
-        subscribe_top = title_top + title_clip.h + 8
+        accent_top = title_top + title_clip.h + gap
+        accent_height = 0
         if subscribe_custom_img is not None or subscribe_enabled:
             if subscribe_custom_img is not None:
                 sub_pil = ImageOps.contain(subscribe_custom_img, (680, 115), method=Image.Resampling.LANCZOS)
@@ -1500,35 +1501,36 @@ def make_video() -> tuple[object, int]:
             else:
                 sub_arr = _subscribe_badge_image(subscribe_text, font_path, effects)
             subscribe_clip = ImageClip(sub_arr).with_duration(bg_duration)
+            if subscribe_clip.w > 728:
+                subscribe_clip = subscribe_clip.resized(width=728)
             fade_start = min(subscribe_delay, max(0.0, bg_duration - 0.5)) if bg_duration > 1.0 else 0.0
             fade_dur = min(0.6, max(0.15, bg_duration - fade_start)) if bg_duration > 0.4 else 0.0
             subscribe_clip = _apply_clip_fade_in(subscribe_clip, bg_duration, fade_start=fade_start, fade_duration=fade_dur)
-            subscribe_clip = subscribe_clip.with_position(('center', subscribe_top))
-            map_top = subscribe_top + subscribe_clip.h + gap
-        else:
-            map_top = title_top + title_clip.h + gap
+            subscribe_clip = subscribe_clip.with_position(('center', accent_top))
+            accent_height = max(accent_height, subscribe_clip.h)
+        map_top = accent_top + accent_height + gap if accent_height else accent_top
 
         branded = bool(watermark_image is not None or watermark_text or has_stars)
-        map_bottom = 1450 if branded else 1760
+        map_bottom = 1450 if watermark_image is not None else (1664 if branded else 1760)
         map_area_height = max(240, map_bottom - map_top)
         # Fit both dimensions so the whole map stays inside the space below the title.
-        scale = min(1040 / map_clip.w, map_area_height / map_clip.h)
+        scale = min(1040 / map_clip.w, map_area_height / map_clip.h) * 1.14
         map_clip = map_clip.resized(scale)
-        map_left = canvas_w - map_clip.w
+        map_y = map_top + (map_area_height - map_clip.h) / 2
         if effects:
             map_image = Image.open(map_path).convert('RGBA').resize((map_clip.w, map_clip.h))
             map_clip = ImageClip(np.array(_with_shadow(map_image))).with_duration(bg_duration)
-            map_left -= 24  # The shadow wrapper adds 24px around the actual map.
+            map_y -= 24
         title_clip = title_clip.with_position(("center", title_top))
-        map_clip = map_clip.with_position((map_left, map_top - (24 if effects else 0)))
+        map_clip = map_clip.with_position(("center", map_y))
         clips = [background_video, scrim, map_clip, title_clip]
 
         if left_sticker_arr is not None:
             left_clip = ImageClip(left_sticker_arr).with_duration(bg_duration)
-            clips.append(left_clip.with_position((145, 16)))
+            clips.append(left_clip.with_position((145, 20)))
         if right_sticker_arr is not None:
             right_clip = ImageClip(right_sticker_arr).with_duration(bg_duration)
-            clips.append(right_clip.with_position((canvas_w - 145 - right_clip.w, 16)))
+            clips.append(right_clip.with_position((canvas_w - 145 - right_clip.w, 20)))
         if subscribe_clip is not None:
             clips.append(subscribe_clip)
 

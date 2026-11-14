@@ -156,12 +156,22 @@
             gap: 16px;
             padding: 70px 20px 160px;
         }
-        #stageCompositeBox.has-top-stickers { padding-top: 175px; }
-        #stageCompositeBox.has-branding { padding-bottom: 470px; }
+        #stageCompositeBox.has-branding { padding-bottom: 256px; }
+        #stageCompositeBox.has-logo { padding-bottom: 470px; }
+        #stageCompositeBox.has-top-stickers { padding-top: 176px; }
+        #stageAccentRow {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            width: 1040px;
+            flex: none;
+        }
+        #stageAccentRow.hidden { display: none; }
 
         #stageTopLeftSticker, #stageTopRightSticker {
             position: absolute;
-            top: 16px;
+            top: 20px;
             width: 188px;
             height: 188px;
             pointer-events: none;
@@ -170,9 +180,15 @@
         #stageTopRightSticker { right: 145px; }
         #stageTopLeftSticker img, #stageTopRightSticker img {
             display: block;
-            width: 100%;
-            height: 100%;
+            width: auto;
+            height: auto;
+            max-width: 188px;
+            max-height: 188px;
             object-fit: contain;
+        }
+        .effects-on #stageCompositeBox img.custom-overlay {
+            margin: 24px;
+            filter: drop-shadow(0 8px 10px rgba(0,0,0,.8));
         }
 
         #stageTitleBanner {
@@ -184,11 +200,11 @@
         #stageSubscribeBanner {
             display: flex;
             justify-content: center;
-            width: 1040px;
+            width: 728px;
             flex: none;
-            margin-top: -8px;
+            margin-top: 0;
         }
-        #stageSubscribeBanner img { display: block; max-width: 680px; max-height: 150px; width: auto; height: auto; object-fit: contain; }
+        #stageSubscribeBanner img { display: block; max-width: 728px; max-height: 163px; width: auto; height: auto; object-fit: contain; }
         #stageWatermarkImage {
             position: absolute; left: 50%; top: 1470px;
             width: 230px; height: 230px; object-fit: cover; border-radius: 50%; transform: translateX(-50%);
@@ -225,11 +241,10 @@
             flex: 1;
             min-height: 0;
             width: 100%;
-            align-items: flex-start;
-            justify-content: flex-end;
+            align-items: center;
+            justify-content: center;
         }
-        /* Extend past the composite's 20px right padding to meet the frame edge. */
-        #stageMapPreview { flex: none; max-width: none; max-height: none; transform: translateX(20px); }
+        #stageMapPreview { flex: none; max-width: none; max-height: none; }
         #stageEmptyPlaceholder { align-self: center; margin-inline: auto; transform: scale(3); max-width: 260px; }
 
         /* Custom Audio Control Styling */
@@ -1123,7 +1138,9 @@
                                 <div id="stageTopLeftSticker" class="hidden"></div>
                                 <div id="stageTopRightSticker" class="hidden"></div>
                                 <div id="stageTitleBanner" class="text-white hidden"></div>
-                                <div id="stageSubscribeBanner" class="hidden"></div>
+                                <div id="stageAccentRow" class="hidden">
+                                    <div id="stageSubscribeBanner" class="hidden"></div>
+                                </div>
                                 <div id="stageMapArea">
                                     <img id="stageMapPreview" alt="Map frame preview" class="hidden object-contain">
                                     <div id="stageEmptyPlaceholder" class="flex flex-col items-center gap-2 text-slate-500">
@@ -1893,7 +1910,7 @@
             const map = document.getElementById('stageMapPreview');
             const area = document.getElementById('stageMapArea');
             if (!map.naturalWidth || !map.naturalHeight) return;
-            const scale = Math.min(area.clientWidth / map.naturalWidth, area.clientHeight / map.naturalHeight);
+            const scale = Math.min(area.clientWidth / map.naturalWidth, area.clientHeight / map.naturalHeight) * 1.14;
             map.style.width = `${map.naturalWidth * scale}px`;
             map.style.height = `${map.naturalHeight * scale}px`;
         }
@@ -2488,6 +2505,18 @@
             return URL.createObjectURL(await response.blob());
         }
 
+        async function customOverlayPreview(file, url, maxWidth, maxHeight) {
+            const img = new Image();
+            img.alt = file.name || 'Custom overlay';
+            img.src = url;
+            await img.decode();
+            const scale = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight);
+            img.style.width = `${Math.round(img.naturalWidth * scale)}px`;
+            img.style.height = `${Math.round(img.naturalHeight * scale)}px`;
+            img.className = 'custom-overlay';
+            return img;
+        }
+
         async function updateAutoMontagePreview() {
             const version = ++autoMontageVersion;
             const settings = titleSettings();
@@ -2496,19 +2525,20 @@
             const leftBox = document.getElementById('stageTopLeftSticker');
             const rightBox = document.getElementById('stageTopRightSticker');
             const subBox = document.getElementById('stageSubscribeBanner');
+            const accentRow = document.getElementById('stageAccentRow');
 
             const hasLeftSticker = Boolean(leftStickerFile || (settings.top_left_sticker && settings.top_left_sticker !== 'none'));
             const hasRightSticker = Boolean(rightStickerFile || (settings.top_right_sticker && settings.top_right_sticker !== 'none'));
             const hasStickers = hasLeftSticker || hasRightSticker;
             compositeBox.classList.toggle('has-top-stickers', hasStickers);
+            accentRow.classList.toggle('hidden', !settings.subscribe_badge);
             renderAutoStickerVariants();
             saveVideoSettings();
 
             // Left sticker preview (custom file takes precedence over built-in preset)
             if (leftStickerFile && leftStickerCustomUrl) {
-                const img = new Image();
-                img.alt = leftStickerFile.name || 'Custom top-left sticker';
-                img.src = leftStickerCustomUrl;
+                const img = await customOverlayPreview(leftStickerFile, leftStickerCustomUrl, 140, 140);
+                if (version !== autoMontageVersion) return;
                 leftBox.replaceChildren(img);
                 leftBox.classList.remove('hidden');
             } else if (settings.top_left_sticker && settings.top_left_sticker !== 'none') {
@@ -2542,9 +2572,8 @@
 
             // Right sticker preview (custom file takes precedence over built-in preset)
             if (rightStickerFile && rightStickerCustomUrl) {
-                const img = new Image();
-                img.alt = rightStickerFile.name || 'Custom top-right sticker';
-                img.src = rightStickerCustomUrl;
+                const img = await customOverlayPreview(rightStickerFile, rightStickerCustomUrl, 140, 140);
+                if (version !== autoMontageVersion) return;
                 rightBox.replaceChildren(img);
                 rightBox.classList.remove('hidden');
             } else if (settings.top_right_sticker && settings.top_right_sticker !== 'none') {
@@ -2579,9 +2608,8 @@
             // Subscribe pill preview (custom uploaded badge image or built-in pill)
             if (settings.subscribe_badge) {
                 if (subscribeImageFile && subscribeCustomUrl) {
-                    const img = new Image();
-                    img.alt = subscribeImageFile.name || 'Custom subscribe badge';
-                    img.src = subscribeCustomUrl;
+                    const img = await customOverlayPreview(subscribeImageFile, subscribeCustomUrl, 680, 115);
+                    if (version !== autoMontageVersion) return;
                     subBox.replaceChildren(img);
                     subBox.classList.remove('hidden');
                 } else {
@@ -2636,6 +2664,7 @@
             const box = document.getElementById('stageCompositeBox');
             box.classList.toggle('has-branding',
                 Boolean(watermarkFile || wm.watermark_text || wm.watermark_stars));
+            box.classList.toggle('has-logo', Boolean(watermarkFile));
             box.classList.toggle('has-stars', Boolean(wm.watermark_stars));
             fitStageMap();
         }

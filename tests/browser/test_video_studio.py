@@ -116,6 +116,27 @@ def test_custom_overlay_files_follow_enable_switches_in_render_payload(studio, t
             assert payloads[-1]['watermark_stars_image'] == ''
 
 
+def test_stickers_sit_at_top_above_headline_and_separate_subscribe(studio):
+    page, _ = studio
+    page.locator('#videoTitleInput').fill('My map video')
+    page.locator('#topLeftStickerSelect').select_option('santa')
+    page.locator('#topRightStickerSelect').select_option('gift')
+    page.wait_for_function("!document.getElementById('stageTopLeftSticker').classList.contains('hidden')")
+    wait_for_title(page)
+    assert page.locator('#stageCompositeBox').evaluate('el => getComputedStyle(el).paddingTop') == '176px'
+    assert page.locator('#stageTopLeftSticker').evaluate('el => getComputedStyle(el).top') == '20px'
+    assert page.locator('#stageTopRightSticker').evaluate('el => getComputedStyle(el).top') == '20px'
+    assert page.locator('#stageTopLeftSticker').evaluate('el => getComputedStyle(el).left') == '145px'
+    assert page.locator('#stageTopRightSticker').evaluate('el => getComputedStyle(el).right') == '145px'
+    assert page.locator('#stageAccentRow').is_hidden()
+    assert page.evaluate('''() => {
+        const sticker = document.getElementById('stageTopLeftSticker').getBoundingClientRect();
+        const title = document.getElementById('stageTitleBanner').getBoundingClientRect();
+        const mapArea = document.getElementById('stageMapArea').getBoundingClientRect();
+        return sticker.top < title.top && (sticker.bottom - 24) < (title.top + 24) && title.bottom < mapArea.top;
+    }''')
+
+
 def test_font_size_reset_and_mobile_frame(studio):
     page, previews = studio
     assert page.locator('#titleFontSelect').input_value() == 'DIN Condensed.ttf'
@@ -166,21 +187,27 @@ def test_map_fit_replacement_and_removal_release_blob_urls(studio, tmp_path):
     image = tmp_path / 'map.png'
     Image.new('RGB', (800, 400), 'green').save(image)
     page.locator('#mapFileInput').set_input_files(str(image))
-    page.wait_for_function("document.querySelector('#stageMapPreview').style.width === '1040px'")
-    assert page.locator('#stageMapPreview').evaluate('el => el.style.height') == '520px'
-    assert page.locator('#stageMapPreview').evaluate('''el => Math.abs(
-        el.getBoundingClientRect().right - el.closest('.video-preview-stage').getBoundingClientRect().right)''') <= 2
+    page.wait_for_function("Math.abs(parseFloat(document.querySelector('#stageMapPreview').style.width) - 1040 * 1.14) < 1")
+    assert float(page.locator('#stageMapPreview').evaluate('el => parseFloat(el.style.height)')) == pytest.approx(520 * 1.14, abs=1)
+    assert page.locator('#stageMapPreview').evaluate('''el => {
+        const m = el.getBoundingClientRect();
+        const s = el.closest('.video-preview-stage').getBoundingClientRect();
+        return Math.abs((m.left + m.right) / 2 - (s.left + s.right) / 2);
+    }''') <= 2
     original = page.locator('#stageMapPreview').get_attribute('src')
     replacement = tmp_path / 'replacement.png'
     Image.new('RGB', (400, 800), 'blue').save(replacement)
     page.locator('#mapFileInput').set_input_files(str(replacement))
     page.wait_for_function('(url) => window.revokedUrls.includes(url)', arg=original)
     page.wait_for_function("parseFloat(document.querySelector('#stageMapPreview').style.height) > 1200")
-    assert page.locator('#stageMapPreview').evaluate('''el => Math.abs(
-        el.getBoundingClientRect().right - el.closest('.video-preview-stage').getBoundingClientRect().right)''') <= 2
+    assert page.locator('#stageMapPreview').evaluate('''el => {
+        const m = el.getBoundingClientRect();
+        const s = el.closest('.video-preview-stage').getBoundingClientRect();
+        return Math.abs((m.left + m.right) / 2 - (s.left + s.right) / 2);
+    }''') <= 2
     page.locator('#videoTitleInput').fill('Найкрасивіші країни Європи')
     wait_for_title(page)
-    page.wait_for_function("document.querySelector('#stageMapPreview').getBoundingClientRect().top >= document.querySelector('#stageTitleBanner').getBoundingClientRect().bottom + 3")
+    page.wait_for_function("document.querySelector('#stageMapArea').getBoundingClientRect().top >= document.querySelector('#stageTitleBanner').getBoundingClientRect().bottom + 3")
     layout = page.evaluate('''() => {
         const stage = document.querySelector('.video-preview-stage').getBoundingClientRect();
         const title = document.querySelector('#stageTitleBanner').getBoundingClientRect();
@@ -189,7 +216,7 @@ def test_map_fit_replacement_and_removal_release_blob_urls(studio, tmp_path):
     }''')
     assert layout['titleTop'] == pytest.approx(70/1920, abs=.002)
     assert layout['mapHeight'] > .62
-    assert layout['mapBottom'] <= 1761/1920
+    assert layout['mapBottom'] <= 1865/1920
     page.locator('#mapDropzone .dropzone-clear').click()
     assert page.locator('#stageMapPreview').is_hidden()
     assert page.evaluate('window.revokedUrls.length') == 2
@@ -264,7 +291,7 @@ def test_watermark_upload_text_effects_and_render_payload(studio, tmp_path):
         return {mapBottom:(map.bottom-stage.top)/stage.height, logoTop:(logo.top-stage.top)/stage.height,
             textTop:(text.top-stage.top)/stage.height};
     }''')
-    assert geometry['mapBottom'] <= 1451 / 1920
+    assert geometry['mapBottom'] <= 1530 / 1920
     assert geometry['logoTop'] == pytest.approx(1470 / 1920, abs=.003)
     assert geometry['textTop'] == pytest.approx(1740 / 1920, abs=.003)
     # Check actual browser-to-server fields without spending time encoding a video here.
