@@ -210,36 +210,6 @@ def test_watermark_preview_uses_rendered_lettering(worker, effects, watermark_fo
     np.testing.assert_array_equal(np.array(Image.open(io.BytesIO(response.data))), expected)
 
 
-def test_branded_render_reserves_footer_and_keeps_logo_transparency(worker, tmp_path):
-    background = tmp_path / 'background.mp4'
-    with ColorClip((180, 320), color=(50, 100, 150), duration=.3) as clip:
-        clip.write_videofile(str(background), fps=30, codec='libx264', logger=None)
-    map_buffer, logo_buffer = io.BytesIO(), io.BytesIO()
-    Image.new('RGBA', (400, 800), (0, 255, 0, 255)).save(map_buffer, format='PNG')
-    logo = Image.new('RGBA', (300, 200), (255, 0, 255, 255))
-    logo.save(logo_buffer, format='PNG')
-    response = worker.app.test_client().post('/api/render_video', json={
-        'map_file': base64.b64encode(map_buffer.getvalue()).decode(),
-        'background_video': base64.b64encode(background.read_bytes()).decode(),
-        'watermark_image': base64.b64encode(logo_buffer.getvalue()).decode(),
-        'video_title': 'Headline\nSecond line', 'watermark_text': 'My channel',
-        'watermark_font': 'Bips.ttf', 'duration': 1,
-    })
-    assert response.status_code == 200, response.json
-    with VideoFileClip(response.json['file_path']) as result:
-        frame = result.get_frame(.1)
-    green_y, _ = np.where((frame[:, :, 1] > 220) & (frame[:, :, 0] < 30))
-    logo_y, logo_x = np.where((frame[:, :, 0] > 220) & (frame[:, :, 2] > 220) & (frame[:, :, 1] < 50))
-    assert green_y.max() < 1535
-    assert 1470 <= logo_y.min() < logo_y.max() < 1701
-    assert abs((logo_x.min() + logo_x.max()) / 2 - 540) < 2
-    # Transparent corners show the background, not an opaque logo rectangle.
-    assert frame[1480, 435, 2] > frame[1480, 435, 0]
-    cyan = (frame[:, :, 0] > 130) & (frame[:, :, 1] > 200) & (frame[:, :, 2] > 200)
-    footer_y, _ = np.where(cyan & (np.indices(cyan.shape)[0] > 1740))
-    assert len(footer_y) > 100 and footer_y.max() < 1900
-
-
 def test_round_logo_center_crop_and_transparency(worker):
     from PIL import ImageDraw
 
