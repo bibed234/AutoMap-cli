@@ -2523,18 +2523,39 @@
             document.getElementById('historyCountBadge').textContent = runHistory.length;
 
             const list = document.getElementById('historyList');
-            list.innerHTML = runHistory.map((item, idx) => `
-                <div onclick="restoreHistoryItem(${idx})" class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-indigo-500/60 cursor-pointer transition flex items-center gap-2.5">
-                    ${item.image_url ? `<img src="${item.image_url}" alt="Map preview" class="w-11 h-11 rounded-lg object-cover border border-slate-700/80 shrink-0 bg-slate-950">` : ''}
-                    <div class="min-w-0 flex-1 flex flex-col justify-between gap-1">
-                        <div class="flex items-center justify-between text-[11px]">
-                            <span class="font-mono text-indigo-400 font-semibold">${item.state.map_type} / ${item.state.mode}</span>
-                            <span class="text-slate-500">${item.time}</span>
-                        </div>
-                        <div class="text-[11px] font-mono text-slate-400 truncate">${item.cmd}</div>
-                    </div>
-                </div>
-            `).join('');
+            list.replaceChildren();
+            runHistory.forEach((item, idx) => {
+                const row = document.createElement('div');
+                row.className = 'p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-indigo-500/60 cursor-pointer transition flex items-center gap-2.5';
+                row.addEventListener('click', () => restoreHistoryItem(idx));
+
+                if (item.image_url) {
+                    const preview = document.createElement('img');
+                    preview.src = item.image_url;
+                    preview.alt = 'Map preview';
+                    preview.className = 'w-11 h-11 rounded-lg object-cover border border-slate-700/80 shrink-0 bg-slate-950';
+                    row.appendChild(preview);
+                }
+
+                const details = document.createElement('div');
+                details.className = 'min-w-0 flex-1 flex flex-col justify-between gap-1';
+                const metadata = document.createElement('div');
+                metadata.className = 'flex items-center justify-between text-[11px]';
+                const mode = document.createElement('span');
+                mode.className = 'font-mono text-indigo-400 font-semibold';
+                mode.textContent = `${item.state.map_type} / ${item.state.mode}`;
+                const time = document.createElement('span');
+                time.className = 'text-slate-500';
+                time.textContent = item.time;
+                metadata.append(mode, time);
+
+                const command = document.createElement('div');
+                command.className = 'text-[11px] font-mono text-slate-400 truncate';
+                command.textContent = item.cmd;
+                details.append(metadata, command);
+                row.appendChild(details);
+                list.appendChild(row);
+            });
         }
 
         function restoreHistoryItem(index) {
