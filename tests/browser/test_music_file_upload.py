@@ -1,3 +1,4 @@
+"""Browser coverage for uploaded music; keep a unique pytest module name."""
 import base64
 
 import pytest
