@@ -37,6 +37,28 @@ def test_generate_forwards_options_and_encodes_png(web, monkeypatch, generation_
     assert 'form-key' not in response.json['command']
 
 
+@pytest.mark.parametrize('temperature', [0, 0.4, 2])
+def test_generate_forwards_temperature_including_zero(web, monkeypatch, generation_request, temperature):
+    generate = Mock(return_value=io.BytesIO(b'png'))
+    monkeypatch.setattr(web, 'auto_map', generate)
+    response = web.app.test_client().post('/api/generate', json={
+        **generation_request, 'temperature': temperature})
+    assert response.status_code == 200
+    assert generate.call_args.kwargs['temperature'] == temperature
+    assert f'--temperature {temperature:g}' in response.json['command']
+
+
+@pytest.mark.parametrize('temperature', [-1, 3, 'NaN', 'Infinity', True, None, 'invalid', {}])
+def test_generate_rejects_invalid_temperature_before_rendering(web, monkeypatch, generation_request, temperature):
+    generate = Mock()
+    monkeypatch.setattr(web, 'auto_map', generate)
+    response = web.app.test_client().post('/api/generate', json={
+        **generation_request, 'temperature': temperature})
+    assert response.status_code == 400
+    assert 'Temperature' in response.json['error']
+    generate.assert_not_called()
+
+
 @pytest.mark.parametrize('gsm', [None, 'bad', 15])
 @pytest.mark.parametrize('extra', ['none', '', None])
 def test_generate_defaults_and_invalid_font_fallback(web, monkeypatch, generation_request, gsm, extra):
@@ -301,7 +323,11 @@ def test_analyze_map_validates_and_inspects_uploaded_image(web):
     assert '#14b45a' in ok_res.json['analysis']['filling_txt']
 
 
-@pytest.mark.parametrize('theme', ['auto', 'viridis', 'heatmap', 'emerald_gold', 'festive', 'oceanic', 'categorical'])
+@pytest.mark.parametrize('theme', [
+    'auto', 'viridis', 'heatmap', 'emerald_gold', 'festive', 'oceanic', 'categorical',
+    'greens', 'blues', 'reds', 'oranges', 'yellows', 'purples', 'teals', 'pinks', 'earth_tones',
+    'pastel', 'neon', 'monochrome', 'sunset',
+])
 def test_analyze_map_supports_every_ui_palette_theme(web, theme):
     client = web.app.test_client()
     res = client.post('/api/analyze_map', json={

@@ -1,7 +1,9 @@
 import json
+import math
 import sys
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 from pathlib import Path
 
 from . import constants, log
@@ -18,7 +20,21 @@ def _warning(title: str, message: str = ""):
     log.warning(f"{title}: {message}" if message else title)
 # mode selecting
 
-def _ai_request(prompt, mode, ai_model, api_key=None) -> str | None:
+def validate_temperature(value: object) -> float:
+    """Accept finite Gemini sampling temperatures in the supported 0–2 range."""
+    message = "Temperature must be a finite number between 0 and 2."
+    if isinstance(value, bool):
+        raise ValueError(message)
+    try:
+        temperature = float(value)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError(message) from exc
+    if not math.isfinite(temperature) or not 0 <= temperature <= 2:
+        raise ValueError(message)
+    return temperature
+
+
+def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> str | None:
     """Send a request to the AI model and return the response as a string."""
 
     if mode == 'default' or mode == 'flag':
@@ -39,6 +55,9 @@ def _ai_request(prompt, mode, ai_model, api_key=None) -> str | None:
     {dict_}
     """
 
+    config = {} if temperature is None else {
+        'config': types.GenerateContentConfig(temperature=validate_temperature(temperature)),
+    }
     try:
         with log.spinner("Waiting for AI response..."):
             # If a key was supplied (e.g. from the web UI when .env is missing),
@@ -47,6 +66,7 @@ def _ai_request(prompt, mode, ai_model, api_key=None) -> str | None:
             request = client.models.generate_content(
                 model=ai_model,
                 contents=prompt_to_ai,
+                **config,
             )
 
 
@@ -57,12 +77,14 @@ def _ai_request(prompt, mode, ai_model, api_key=None) -> str | None:
     return request.text
 
 
-def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None, _ai_answer = None) -> dict | None:
+def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None, _ai_answer = None,
+               *, temperature: float | None = None) -> dict | None:
     "handle the AI request and parse the response into a dictionary."
     if _ai_answer is not None:
         request = _ai_answer
     else:
-        request = _ai_request(prompt, mode, ai_model, api_key)
+        options = {} if temperature is None else {'temperature': temperature}
+        request = _ai_request(prompt, mode, ai_model, api_key, **options)
 
     # The AI request can fail and return None (the error is already logged).
     # Guard against that to avoid "AttributeError: 'NoneType' object has no attribute 'strip'".

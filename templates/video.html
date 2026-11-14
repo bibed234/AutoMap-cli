@@ -226,10 +226,11 @@
             min-height: 0;
             width: 100%;
             align-items: flex-start;
-            justify-content: center;
+            justify-content: flex-end;
         }
-        #stageMapPreview { flex: none; max-width: none; max-height: none; }
-        #stageEmptyPlaceholder { align-self: center; transform: scale(3); max-width: 260px; }
+        /* Extend past the composite's 20px right padding to meet the frame edge. */
+        #stageMapPreview { flex: none; max-width: none; max-height: none; transform: translateX(20px); }
+        #stageEmptyPlaceholder { align-self: center; margin-inline: auto; transform: scale(3); max-width: 260px; }
 
         /* Custom Audio Control Styling */
         audio {
@@ -3159,6 +3160,7 @@
 
             try {
                 // Encode materials and any custom overlay images as base64 data URLs.
+                const overlaySettings = {...titleSettings(), ...watermarkSettings()};
                 const [
                     mapB64,
                     bgB64,
@@ -3173,8 +3175,8 @@
                     fileToDataUrl(bgFile),
                     watermarkFile ? fileToDataUrl(watermarkFile) : '',
                     includeAudio && cutAudioFile ? fileToDataUrl(cutAudioFile) : '',
-                    subscribeImageFile ? fileToDataUrl(subscribeImageFile) : '',
-                    watermarkStarsFile ? fileToDataUrl(watermarkStarsFile) : '',
+                    overlaySettings.subscribe_badge && subscribeImageFile ? fileToDataUrl(subscribeImageFile) : '',
+                    overlaySettings.watermark_stars && watermarkStarsFile ? fileToDataUrl(watermarkStarsFile) : '',
                     leftStickerFile ? fileToDataUrl(leftStickerFile) : '',
                     rightStickerFile ? fileToDataUrl(rightStickerFile) : '',
                 ]);
@@ -3189,8 +3191,7 @@
                     include_audio: includeAudio,
                     codec: codec,
                     duration: parseInt(durationSecs, 10),
-                    ...titleSettings(),
-                    ...watermarkSettings(),
+                    ...overlaySettings,
                     watermark_image: watermarkB64,
                     subscribe_image: subscribeImageB64,
                     watermark_stars_image: watermarkStarsImageB64,

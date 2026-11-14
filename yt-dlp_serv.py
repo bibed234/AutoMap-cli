@@ -1466,6 +1466,11 @@ def make_video() -> tuple[object, int]:
         subscribe_delay = max(0.0, min(25.0, subscribe_delay))
 
         watermark_stars = bool(data.get('watermark_stars', False))
+        # Explicit switches take precedence over previously uploaded custom images.
+        if data.get('subscribe_badge') is False:
+            subscribe_custom_img = None
+        if data.get('watermark_stars') is False:
+            watermark_stars_custom_img = None
         has_stars = bool(watermark_stars or watermark_stars_custom_img is not None)
         intro_fade = bool(data.get('intro_fade', False))
 
@@ -1509,11 +1514,13 @@ def make_video() -> tuple[object, int]:
         # Fit both dimensions so the whole map stays inside the space below the title.
         scale = min(1040 / map_clip.w, map_area_height / map_clip.h)
         map_clip = map_clip.resized(scale)
+        map_left = canvas_w - map_clip.w
         if effects:
             map_image = Image.open(map_path).convert('RGBA').resize((map_clip.w, map_clip.h))
             map_clip = ImageClip(np.array(_with_shadow(map_image))).with_duration(bg_duration)
+            map_left -= 24  # The shadow wrapper adds 24px around the actual map.
         title_clip = title_clip.with_position(("center", title_top))
-        map_clip = map_clip.with_position(("center", map_top - (24 if effects else 0)))
+        map_clip = map_clip.with_position((map_left, map_top - (24 if effects else 0)))
         clips = [background_video, scrim, map_clip, title_clip]
 
         if left_sticker_arr is not None:

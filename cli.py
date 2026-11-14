@@ -92,7 +92,9 @@ def main():
               "api_key",
               default=None,
               help="Gemini API key for this run (overrides GEMINI_API_KEY env var).")
-def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, show_result, verbose, api_key):
+@click.option("--temperature", type=click.FloatRange(0, 2), default=None,
+              help="AI sampling randomness, from 0 to 2. Omit to use the model default.")
+def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, show_result, verbose, api_key, temperature):
     """Generate a map from PROMPT and save it as result.png.
 
     Example:
@@ -102,6 +104,14 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
     # Lazy import so `automap --help` stays fast and doesn't require API keys.
     from map import log
     from map.auto_map import auto_map
+
+    ai_options = {}
+    if temperature is not None:
+        from map.functions import validate_temperature
+        try:
+            ai_options['temperature'] = validate_temperature(temperature)
+        except ValueError as error:
+            raise click.BadParameter(str(error), param_hint='--temperature') from error
 
     # Wire up verbose logging before doing any work.
     log.set_verbose(verbose)
@@ -123,6 +133,7 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
         model=model,
         font_name=font_name,
         show_result=show_result,
+        **ai_options,
     )
 
     if out_path is None:

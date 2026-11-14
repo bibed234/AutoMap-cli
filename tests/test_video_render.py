@@ -67,9 +67,9 @@ def test_default_preview_matches_default_render_title(worker):
     )
 
 
-@pytest.mark.parametrize('font,size', [('DIN Condensed.ttf', 100), ('Bips.ttf', 72)])
+@pytest.mark.parametrize('font,size,effects', [('DIN Condensed.ttf', 100, True), ('Bips.ttf', 72, False)])
 @pytest.mark.parametrize('map_size', [(800, 400), (400, 800), (600, 600)])
-def test_portrait_render_with_centered_title_and_map(worker, tmp_path, font, size, map_size):
+def test_portrait_render_with_centered_title_and_right_aligned_map(worker, tmp_path, font, size, effects, map_size):
     background = tmp_path / 'background.mp4'
     with ColorClip((640, 360), color=(50, 100, 150), duration=1) as clip:
         clip.write_videofile(str(background), fps=30, codec='libx264', logger=None)
@@ -80,6 +80,7 @@ def test_portrait_render_with_centered_title_and_map(worker, tmp_path, font, siz
         'background_video': base64.b64encode(background.read_bytes()).decode(),
         'video_title': 'Найкрасивіші країни Європи',
         'title_font': font, 'title_font_size': size,
+        'visual_effects': effects,
         'duration': 1, 'include_audio': False,
     })
     assert response.status_code == 200, response.json
@@ -91,7 +92,7 @@ def test_portrait_render_with_centered_title_and_map(worker, tmp_path, font, siz
         frame = result.get_frame(.5)
     green = (frame[:, :, 1] > 220) & (frame[:, :, 0] < 30)
     ys, xs = np.where(green)
-    assert abs((xs.min() + xs.max()) / 2 - 540) < 2
+    assert xs.max() >= 1078  # Map artwork reaches the right edge, including with a shadow.
     assert (xs.max() - xs.min()) / (ys.max() - ys.min()) == pytest.approx(map_size[0] / map_size[1], abs=.03)
     assert ys.max() <= 1761
     if map_size[1] > map_size[0]:
@@ -362,7 +363,8 @@ def test_all_sticker_kinds_and_auto_preview(worker):
     np.testing.assert_array_equal(right_arr, worker._sticker_image('chart'))
 
 
-def test_custom_subscribe_stars_and_top_sticker_images_render(worker, tmp_path):
+@pytest.mark.parametrize('overlays_enabled', [True, False])
+def test_custom_subscribe_stars_and_top_sticker_images_render(worker, tmp_path, overlays_enabled):
     background = tmp_path / 'background.mp4'
     with ColorClip((180, 320), color=(30, 50, 70), duration=1.0) as clip:
         clip.write_videofile(str(background), fps=30, codec='libx264', logger=None)
@@ -383,9 +385,11 @@ def test_custom_subscribe_stars_and_top_sticker_images_render(worker, tmp_path):
         'top_left_sticker_image': base64.b64encode(sticker_buf.getvalue()).decode(),
         'top_right_sticker': 'auto',
         'subscribe_image': base64.b64encode(sub_buf.getvalue()).decode(),
+        'subscribe_badge': overlays_enabled,
         'subscribe_delay': 0.0,
         'watermark_text': 'TERRAMAPPER',
         'watermark_stars_image': base64.b64encode(stars_buf.getvalue()).decode(),
+        'watermark_stars': overlays_enabled,
         'duration': 1,
     })
     assert response.status_code == 200, response.json
@@ -399,11 +403,18 @@ def test_custom_subscribe_stars_and_top_sticker_images_render(worker, tmp_path):
     # Custom magenta subscribe badge is rendered below the title and shifts map down
     magenta = (frame[:, :, 0] > 210) & (frame[:, :, 2] > 210) & (frame[:, :, 1] < 50)
     mag_y, _ = np.where(magenta)
-    assert len(mag_y) > 200
+    if overlays_enabled:
+        assert len(mag_y) > 200
+    else:
+        assert len(mag_y) == 0
     green_y, _ = np.where((frame[:, :, 1] > 210) & (frame[:, :, 0] < 40) & (frame[:, :, 2] < 40))
-    assert green_y.min() > mag_y.max()
+    if overlays_enabled:
+        assert green_y.min() > mag_y.max()
 
     # Custom yellow stars/footer badge is rendered at the bottom footer
     yellow_footer = (frame[1760:1915, :, 0] > 210) & (frame[1760:1915, :, 1] > 210) & (frame[1760:1915, :, 2] < 60)
-    assert np.count_nonzero(yellow_footer) > 200
+    if overlays_enabled:
+        assert np.count_nonzero(yellow_footer) > 200
+    else:
+        assert np.count_nonzero(yellow_footer) == 0
 

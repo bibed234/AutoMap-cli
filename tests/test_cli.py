@@ -60,6 +60,20 @@ def test_failed_generation_returns_error(generate):
     assert 'Map generation failed' in result.output
 
 
+@pytest.mark.parametrize('value', ['0', '0.4', '2'])
+def test_cli_temperature_is_forwarded(generate, value):
+    result = CliRunner().invoke(cli.main, ['make', 'Population', '--temperature', value])
+    assert result.exit_code == 0, result.output
+    assert generate.call_args.kwargs['temperature'] == float(value)
+
+
+@pytest.mark.parametrize('value', ['-1', '3', 'nan', 'inf', 'invalid'])
+def test_cli_rejects_invalid_temperature_without_generating(generate, value):
+    result = CliRunner().invoke(cli.main, ['make', 'Population', '--temperature', value])
+    assert result.exit_code == 2
+    generate.assert_not_called()
+
+
 @pytest.mark.parametrize('module_name', ['cli', 'main'])
 def test_font_discovery(module_name, web, tmp_path, monkeypatch):
     module = cli if module_name == 'cli' else web

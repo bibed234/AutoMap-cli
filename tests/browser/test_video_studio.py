@@ -83,6 +83,39 @@ def wait_for_title(page):
     page.wait_for_function("document.querySelector('#titlePreviewStatus').textContent === 'Preview matches rendered title'")
 
 
+def test_custom_overlay_files_follow_enable_switches_in_render_payload(studio, tmp_path):
+    page, _ = studio
+    image = tmp_path / 'custom-overlay.png'
+    Image.new('RGBA', (100, 60), (255, 0, 255, 255)).save(image)
+    page.locator('#subscribeImageInput').set_input_files(str(image))
+    page.locator('#watermarkStarsImageInput').set_input_files(str(image))
+    page.locator('#mapFileInput').set_input_files(str(image))
+    page.wait_for_function('subscribeImageFile && watermarkStarsFile && renderFiles.mapFileInput')
+    page.locator('#videoTitleInput').fill('Custom overlays')
+    page.evaluate("renderFiles.bgFileInput = new File(['test'], 'background.mp4', {type:'video/mp4'})")
+    payloads = []
+
+    def capture(route):
+        payloads.append(route.request.post_data_json)
+        route.fulfill(status=400, json={'error': 'Test render captured'})
+
+    page.route('**/api/render_video', capture)
+    for enabled in (False, True):
+        page.evaluate('''enabled => {
+            document.getElementById('subscribeBadgeToggle').checked = enabled;
+            document.getElementById('watermarkStarsToggle').checked = enabled;
+        }''', enabled)
+        page.evaluate('handleRenderVideo({preventDefault(){}})')
+        assert payloads[-1]['subscribe_badge'] is enabled
+        assert payloads[-1]['watermark_stars'] is enabled
+        if enabled:
+            assert payloads[-1]['subscribe_image'].startswith('data:image/png;base64,')
+            assert payloads[-1]['watermark_stars_image'].startswith('data:image/png;base64,')
+        else:
+            assert payloads[-1]['subscribe_image'] == ''
+            assert payloads[-1]['watermark_stars_image'] == ''
+
+
 def test_font_size_reset_and_mobile_frame(studio):
     page, previews = studio
     assert page.locator('#titleFontSelect').input_value() == 'DIN Condensed.ttf'
@@ -135,12 +168,16 @@ def test_map_fit_replacement_and_removal_release_blob_urls(studio, tmp_path):
     page.locator('#mapFileInput').set_input_files(str(image))
     page.wait_for_function("document.querySelector('#stageMapPreview').style.width === '1040px'")
     assert page.locator('#stageMapPreview').evaluate('el => el.style.height') == '520px'
+    assert page.locator('#stageMapPreview').evaluate('''el => Math.abs(
+        el.getBoundingClientRect().right - el.closest('.video-preview-stage').getBoundingClientRect().right)''') <= 2
     original = page.locator('#stageMapPreview').get_attribute('src')
     replacement = tmp_path / 'replacement.png'
     Image.new('RGB', (400, 800), 'blue').save(replacement)
     page.locator('#mapFileInput').set_input_files(str(replacement))
     page.wait_for_function('(url) => window.revokedUrls.includes(url)', arg=original)
     page.wait_for_function("parseFloat(document.querySelector('#stageMapPreview').style.height) > 1200")
+    assert page.locator('#stageMapPreview').evaluate('''el => Math.abs(
+        el.getBoundingClientRect().right - el.closest('.video-preview-stage').getBoundingClientRect().right)''') <= 2
     page.locator('#videoTitleInput').fill('Найкрасивіші країни Європи')
     wait_for_title(page)
     page.wait_for_function("document.querySelector('#stageMapPreview').getBoundingClientRect().top >= document.querySelector('#stageTitleBanner').getBoundingClientRect().bottom + 3")

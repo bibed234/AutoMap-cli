@@ -54,6 +54,7 @@ from map.auto_map import (
     _to_rgba_tuple,
 )
 from map.constants import europe_coords, world_coords
+from map.functions import validate_temperature
 
 from flask import Flask, request, jsonify, send_file, render_template, Response
 
@@ -398,7 +399,7 @@ def generate():
     """Generate a map from the JSON body and return it as a data URL.
 
     Request JSON:
-        { "topic", "mode", "map_type", "gsm", "extra_option", "model", "font" }
+        { "topic", "mode", "map_type", "gsm", "extra_option", "model", "font", "temperature" }
 
     Response JSON:
         { "status": "success", "command": "...", "image_url": "data:image/png;base64,..." }
@@ -415,6 +416,13 @@ def generate():
     # auto_map would raise FileNotFoundError when loading the TrueType file.
     font_name, extra_option, gsm = _parse_render_params(data)
 
+    temperature_options = {}
+    if 'temperature' in data:
+        try:
+            temperature_options['temperature'] = validate_temperature(data['temperature'])
+        except ValueError as error:
+            return jsonify(status='error', error=str(error)), 400
+
     # Rebuild the equivalent CLI command for display only; it is never executed.
     command = (
         f"python cli.py make \"{data.get('topic', '')}\" "
@@ -422,6 +430,8 @@ def generate():
         f"-gsm {gsm} -eop {data.get('extra_option', 'none')} "
         f"--model {data.get('model', 'gemini-2.5-flash')} --font \"{font_name}\""
     )
+    if temperature_options:
+        command += f" --temperature {temperature_options['temperature']:g}"
 
     style_kwargs: dict[str, object] = {}
     for style_key, kw_name in (
@@ -446,6 +456,7 @@ def generate():
             show_result=False,
             io_res=True,
             api_key=api_key,
+            **temperature_options,
             **style_kwargs,
         )
     except KeyError as e:

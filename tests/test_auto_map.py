@@ -300,4 +300,47 @@ def test_long_labels_auto_fit_without_changing_their_text(scene, monkeypatch, ma
     assert text.call_args.kwargs['font'].size < original_size
 
 
+@pytest.mark.parametrize('theme', [
+    'greens', 'blues', 'reds', 'oranges', 'yellows', 'purples', 'teals', 'pinks', 'earth_tones',
+])
+@pytest.mark.parametrize('mode', ['text', 'number'])
+def test_new_palettes_render_selected_colors_for_categories_and_numbers(scene, theme, mode):
+    values = {'one': 'Yes', 'two': 'No', 'three': 'Other'} if mode == 'text' else {
+        'one': 1, 'two': 50, 'three': 99}
+    scene[0].return_value = values
+    output = render(mode=mode, auto_style=True, palette_theme=theme)
+    image = scene[2](output)
+    palette = renderer._PALETTE_THEMES[theme]
+    assert output.map_meta['resolved_theme'] == theme
+    assert image.getpixel((80, 600)) == palette[0]
+    assert image.getpixel((290, 600)) == palette[1]
+    assert image.getpixel((500, 600)) == palette[2]
+
+
+@pytest.mark.parametrize('value', ['1.9', '1,234', '2.5M'])
+def test_numeric_render_uses_same_parser_as_palette_analysis(scene, value):
+    scene[0].return_value = {'one': value}
+    output = render(mode='number', auto_style=True, palette_theme='greens')
+    assert scene[2](output).getpixel((80, 600)) == (187, 247, 208, 255)
+    assert list(output.map_meta['used_num'].values()) == [[187, 247, 208, 255]]
+
+
+def test_null_text_values_are_skipped_instead_of_printing_none(scene, monkeypatch):
+    scene[0].return_value = {'one': None, 'two': '', 'three': 'Yes'}
+    draw_text = Mock()
+    monkeypatch.setattr(ImageDraw.ImageDraw, 'text', draw_text)
+    output = render(auto_style=True)
+    assert [call.args[1] for call in draw_text.call_args_list] == ['Yes']
+    assert set(output.map_meta['used_txt']) == {'Yes'}
+    assert scene[2](output).getpixel((80, 600)) == (255, 255, 255, 255)
+
+
+def test_renderer_forwards_temperature_to_ai_but_repaint_does_not_call_ai(scene):
+    render(temperature=0)
+    scene[0].assert_called_once_with('topic', 'default', 'mock-model', 'request-key', temperature=0)
+    scene[0].reset_mock()
+    render(temperature=2, ai_answer_override={'one': 'Yes'})
+    scene[0].assert_not_called()
+
+
 

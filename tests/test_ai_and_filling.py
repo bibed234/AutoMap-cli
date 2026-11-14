@@ -57,6 +57,21 @@ def test_ai_failure_is_reported(monkeypatch):
     assert functions._ai_request('topic', 'default', 'model') is None
 
 
+@pytest.mark.parametrize('temperature', [0, 0.4, 2])
+def test_temperature_reaches_gemini_generation_config(monkeypatch, temperature):
+    generate = Mock(return_value=SimpleNamespace(text='{"ukraine":42}'))
+    client = Mock(return_value=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
+    monkeypatch.setattr(functions.genai, 'Client', client)
+    assert functions.ai_request('Population', 'default', 'model', temperature=temperature) == {'ukraine': 42}
+    assert generate.call_args.kwargs['config'].temperature == temperature
+
+
+@pytest.mark.parametrize('temperature', [-0.1, 2.1, float('nan'), float('inf'), True, None, 'invalid', {}])
+def test_invalid_temperature_is_rejected(temperature):
+    with pytest.raises(ValueError, match='between 0 and 2'):
+        functions.validate_temperature(temperature)
+
+
 def filling_path(monkeypatch, tmp_path, content):
     monkeypatch.setattr(functions, '__file__', str(tmp_path / 'functions.py'))
     path = tmp_path / 'filling.json'

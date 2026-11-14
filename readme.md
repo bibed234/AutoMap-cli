@@ -118,6 +118,7 @@ Flags:
 - `-gsm, --global-size-modifier` — global font size modifier (default `15`)
 - `-eop, --extra-option` — `none` (default), `show_most_least` or `short_form`
 - `--model` — AI model to use
+- `--temperature` — response randomness from `0` to `2`; omit for the model default. The web slider defaults to `0.75` and remembers your selection. This controls sampling, not factual accuracy.
 - `--font` — font file name from `resources/fonts`
 - `--show/--no-show` — open the result image after generating
 - `-v, --verbose` — print detailed progress output

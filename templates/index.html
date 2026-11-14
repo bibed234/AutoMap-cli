@@ -34,6 +34,28 @@
     </script>
 
     <style>
+        #aiTemperature::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 22px;
+            height: 22px;
+            border: 3px solid #e0e7ff;
+            border-radius: 50%;
+            background: #818cf8;
+            box-shadow: 0 0 12px rgba(129, 140, 248, .6);
+        }
+        #aiTemperature::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border: 3px solid #e0e7ff;
+            border-radius: 50%;
+            background: #818cf8;
+            box-shadow: 0 0 12px rgba(129, 140, 248, .6);
+        }
+        #aiTemperature:focus-visible {
+            outline: 2px solid #a5b4fc;
+            outline-offset: 6px;
+        }
+
         /* Custom Scrollbar */
         ::-webkit-scrollbar {
             width: 6px;
@@ -537,7 +559,30 @@
                         </div>
                     </div>
 
+                    <div id="aiTemperaturePanel" class="p-4 rounded-xl border border-indigo-400/50 bg-gradient-to-br from-indigo-950/90 via-slate-900 to-purple-950/70 shadow-lg shadow-indigo-950/40">
+                        <div class="flex justify-between items-center gap-3 mb-3">
+                            <label for="aiTemperature" class="text-sm font-semibold text-indigo-100 flex items-center gap-2">
+                                <i class="fa-solid fa-sliders text-indigo-300" aria-hidden="true"></i>
+                                AI Temperature
+                            </label>
+                            <output id="aiTemperatureValue" for="aiTemperature" class="px-3 py-1 rounded-lg border border-indigo-400/40 bg-indigo-500/20 text-base font-semibold font-mono tabular-nums text-indigo-100">0.75</output>
+                        </div>
+                        <input id="aiTemperature" type="range" min="0" max="2" step="0.05" value="0.75"
+                            aria-describedby="aiTemperatureHint" oninput="updateAiTemperature(this.value)"
+                            class="w-full h-2.5 rounded-full appearance-none cursor-pointer accent-indigo-400">
+                        <div class="flex justify-between text-[11px] text-indigo-200/90 mt-2"><span>0 · More consistent</span><span>2 · More varied</span></div>
+                        <button type="button" onclick="updateAiTemperature(0.75)" class="mt-2 text-xs font-medium text-indigo-300 hover:text-indigo-100 underline underline-offset-2">Reset to 0.75</button>
+                        <p id="aiTemperatureHint" class="text-[11px] text-slate-300 mt-2">Controls response randomness, not factual accuracy. Lower values do not prevent AI hallucinations.</p>
+                    </div>
+
                     <!-- Color Filling Studio Quick Preview Bar -->
+                    <div>
+                        <label for="mapPaletteThemeSelect" class="block text-xs font-medium text-slate-300 mb-1.5">Map Color Theme</label>
+                        <select id="mapPaletteThemeSelect" onchange="onPaletteThemeChange(this.value)" class="w-full px-3 py-2.5 bg-slate-950/90 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500">
+                            <option value="auto">Auto Smart Theme</option>
+                        </select>
+                        <p class="text-[11px] text-slate-400 mt-1">Applied when you generate the map.</p>
+                    </div>
                     <div class="p-3 rounded-xl bg-slate-950/75 border border-slate-800/90 flex items-center justify-between gap-3">
                         <div class="min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
@@ -877,12 +922,29 @@
                             <label for="fillingPaletteTheme" class="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1">Palette Theme Mode</label>
                             <select id="fillingPaletteTheme" onchange="onPaletteThemeChange()" class="w-full px-2.5 py-1.5 bg-slate-950/90 border border-slate-700/90 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
                                 <option value="auto">✨ Auto Smart Theme (By Map Data &amp; Topic)</option>
-                                <option value="viridis">🌌 Cyber Viridis (Cyan → Indigo → Rose)</option>
+                                <option value="viridis">Viridis (Purple → Teal → Yellow)</option>
                                 <option value="heatmap">🔥 Heatmap (Cobalt → Emerald → Crimson)</option>
                                 <option value="emerald_gold">💎 Economy Emerald-Gold (Coral → Gold → Emerald)</option>
                                 <option value="festive">🎄 Festive &amp; Dates (Royal Blue, Pine, Gold, Crimson)</option>
                                 <option value="oceanic">🌊 Oceanic (Sky → Cobalt → Violet)</option>
                                 <option value="categorical">🎨 High-Contrast Categorical (12 Vivid Swatches)</option>
+                                <optgroup label="Single Color Gradients">
+                                    <option value="greens">Greens</option>
+                                    <option value="blues">Blues</option>
+                                    <option value="reds">Reds</option>
+                                    <option value="oranges">Oranges</option>
+                                    <option value="yellows">Yellows</option>
+                                    <option value="purples">Purples</option>
+                                    <option value="teals">Teals</option>
+                                    <option value="pinks">Pinks</option>
+                                </optgroup>
+                                <optgroup label="More Palettes">
+                                    <option value="earth_tones">Earth Tones</option>
+                                    <option value="pastel">Pastel</option>
+                                    <option value="neon">Neon</option>
+                                    <option value="monochrome">Monochrome</option>
+                                    <option value="sunset">Sunset</option>
+                                </optgroup>
                             </select>
                         </div>
                         <div id="detectedMapStatsBar" class="sm:col-span-7 flex flex-wrap items-center gap-1.5 text-[11px] font-mono text-slate-300 bg-slate-950/75 border border-slate-800/90 rounded-lg px-3 py-2 min-h-[42px]">
@@ -1000,14 +1062,18 @@
 
             <!-- Modal Footer -->
             <div class="px-6 py-3.5 border-t border-slate-800 bg-slate-950/80 flex flex-wrap items-center justify-between gap-2">
+                <div id="mapRepaintStatus" role="status" aria-live="polite" class="hidden w-full text-xs text-emerald-300 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-notch animate-spin" aria-hidden="true"></i>
+                    <span>Re-painting map… Please wait while colors and labels are rendered.</span>
+                </div>
                 <button type="button" onclick="resetFillingDefaults()" class="text-xs text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
                     <i class="fa-solid fa-rotate-left"></i>
                     <span>Restore Default Palette</span>
                 </button>
                 <div class="flex items-center gap-2">
-                    <button type="button" id="restyleCurrentMapBtn" onclick="restyleCurrentMapFromStudio()" class="px-3.5 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-semibold transition flex items-center gap-1.5">
-                        <i class="fa-solid fa-paintbrush"></i>
-                        <span>Apply &amp; Re-Paint Current Map</span>
+                    <button type="button" id="restyleCurrentMapBtn" onclick="restyleCurrentMapFromStudio()" class="px-3.5 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait">
+                        <i id="mapRepaintIcon" class="fa-solid fa-paintbrush" aria-hidden="true"></i>
+                        <span id="mapRepaintButtonLabel">Apply &amp; Re-Paint Current Map</span>
                     </button>
                     <button type="button" onclick="closeFillingStudio(true)" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">
                         Done &amp; Save Preview
@@ -1063,9 +1129,29 @@
         };
         let lastMapValues = null;
         let lastMapAnalysis = null;
+        let paletteAnalysisVersion = 0;
+        let paletteAnalysisRequest = null;
+        let paletteAnalysisPending = false;
+        let paletteAnalysisReady = true;
+        let mapRepaintPending = false;
+        const MAP_PALETTE_STORAGE_KEY = 'automap-map-palette-theme';
+        const AI_TEMPERATURE_STORAGE_KEY = 'automap-ai-temperature';
+        const DEFAULT_AI_TEMPERATURE = 0.75;
 
         // --- Initialize on Load ---
         window.addEventListener('DOMContentLoaded', () => {
+            updateAiTemperature(DEFAULT_AI_TEMPERATURE, false);
+            try {
+                const saved = localStorage.getItem(AI_TEMPERATURE_STORAGE_KEY);
+                if (saved !== null) updateAiTemperature(saved, false);
+            } catch {
+                // Keep the default when browser storage is unavailable.
+            }
+            restoreMapPaletteTheme();
+            const paletteSource = document.getElementById('fillingPaletteTheme');
+            const paletteSelect = document.getElementById('mapPaletteThemeSelect');
+            paletteSelect.replaceChildren(...Array.from(paletteSource.children, option => option.cloneNode(true)));
+            paletteSelect.value = paletteSource.value;
             updateCommandPreview();
             renderFillingStudio();
             // Discover real fonts from the backend on startup (silent — no toast)
@@ -1268,15 +1354,30 @@
                 font,
                 topic,
                 api_key: apiKey,
+                temperature: Number(document.getElementById('aiTemperature').value),
                 auto_style,
                 palette_theme,
-                filling_txt,
-                filling_num,
+                // Automatic previews are not manual overrides for the next map.
+                ...(!auto_style ? { filling_txt, filling_num } : {}),
                 label_style: { ...labelStyleConfig }
             };
         }
 
         // --- Sync Global Size Modifier Slider & Number Input ---
+        function updateAiTemperature(value, persist = true) {
+            const parsed = Number(value);
+            const temperature = Number.isFinite(parsed) ? Math.max(0, Math.min(2, parsed)) : DEFAULT_AI_TEMPERATURE;
+            const input = document.getElementById('aiTemperature');
+            input.value = temperature;
+            document.getElementById('aiTemperatureValue').textContent = Number(input.value).toFixed(2);
+            const progress = Number(input.value) / 2 * 100;
+            input.style.background = `linear-gradient(to right, #818cf8 ${progress}%, #334155 ${progress}%)`;
+            if (persist) {
+                try { localStorage.setItem(AI_TEMPERATURE_STORAGE_KEY, input.value); } catch {}
+                updateCommandPreview();
+            }
+        }
+
         function syncGsm(val) {
             const parsed = parseInt(val, 10);
             const safeVal = Math.max(-50, Math.min(100, isNaN(parsed) ? 15 : parsed));
@@ -1297,7 +1398,7 @@
 
             // Match cli.py's signature: `cli.py make "<prompt>" -m ... -mp ... -gsm ... -eop ... --model ... --font ...`
             const escapedTopic = (state.topic || '').replace(/"/g, '\\"');
-            let cmd = `python cli.py make "${escapedTopic}" -m ${state.mode} -mp ${state.map_type} -gsm ${state.gsm} -eop ${state.extra_option} --model ${state.model} --font "${state.font}"`;
+            let cmd = `python cli.py make "${escapedTopic}" -m ${state.mode} -mp ${state.map_type} -gsm ${state.gsm} -eop ${state.extra_option} --model ${state.model} --font "${state.font}" --temperature ${state.temperature}`;
 
             document.getElementById('cliCommandDisplay').textContent = cmd;
             updateActiveBadges(state);
@@ -1458,6 +1559,7 @@
         // --- Handle Map Generation (Form Submit) ---
         async function handleGenerate(e) {
             e.preventDefault();
+            cancelPaletteAnalysis();
             const state = getFormState();
             const cmd = document.getElementById('cliCommandDisplay').textContent;
 
@@ -1612,17 +1714,56 @@
         }
 
         function onAutoStyleToggleChange() {
+            cancelPaletteAnalysis();
             renderFillingStudio();
             const isAuto = !!document.getElementById('autoStyleFromMapToggle')?.checked;
             showToast(isAuto ? "Smart Auto-Detect from Map enabled" : "Manual custom rules mode active", "info");
+            if (isAuto && lastMapValues) return autoDetectMapColorsAndStyle(true);
         }
 
-        function onPaletteThemeChange() {
+        function onPaletteThemeChange(theme = document.getElementById('fillingPaletteTheme').value) {
+            document.getElementById('fillingPaletteTheme').value = theme;
+            document.getElementById('mapPaletteThemeSelect').value = theme;
+            try {
+                localStorage.setItem(MAP_PALETTE_STORAGE_KEY,
+                    document.getElementById('fillingPaletteTheme').value);
+            } catch {
+                // The palette still works when browser storage is unavailable.
+            }
+            document.getElementById('autoStyleFromMapToggle').checked = true;
             if (lastMapValues && Object.keys(lastMapValues).length > 0) {
-                autoDetectMapColorsAndStyle(true);
+                return autoDetectMapColorsAndStyle(true);
             } else {
+                cancelPaletteAnalysis();
                 renderFillingStudio();
             }
+        }
+
+        function restoreMapPaletteTheme() {
+            try {
+                const saved = localStorage.getItem(MAP_PALETTE_STORAGE_KEY);
+                const select = document.getElementById('fillingPaletteTheme');
+                if (saved && Array.from(select.options).some(option => option.value === saved)) {
+                    select.value = saved;
+                }
+            } catch {
+                // Fall back to Auto if storage is blocked.
+            }
+        }
+
+        function cancelPaletteAnalysis() {
+            paletteAnalysisVersion++;
+            if (paletteAnalysisRequest) paletteAnalysisRequest.abort();
+            paletteAnalysisRequest = null;
+            paletteAnalysisPending = false;
+            paletteAnalysisReady = true;
+            document.getElementById('restyleCurrentMapBtn').disabled = mapRepaintPending;
+            document.getElementById('autoDetectMapIcon').className = 'fa-solid fa-magnifying-glass-chart text-[11px]';
+        }
+
+        function useManualFillingRules() {
+            cancelPaletteAnalysis();
+            document.getElementById('autoStyleFromMapToggle').checked = false;
         }
 
         function updateLabelStyleField(field, val) {
@@ -1655,14 +1796,14 @@
             } else {
                 lastMapValues = mapValues;
             }
-            if (Array.isArray(analysis.ui_txt_rules) && analysis.ui_txt_rules.length > 0) {
+            if (Array.isArray(analysis.ui_txt_rules)) {
                 fillingTxtRules = analysis.ui_txt_rules.map(r => ({
                     key: r.key,
                     hex: r.hex || '#6366f1',
                     alpha: typeof r.alpha === 'number' ? r.alpha : 255
                 }));
             }
-            if (Array.isArray(analysis.ui_num_rules) && analysis.ui_num_rules.length > 0) {
+            if (Array.isArray(analysis.ui_num_rules)) {
                 fillingNumRules = analysis.ui_num_rules.map(r => ({
                     low: Number(r.low) || 0,
                     high: Number(r.high) || 0,
@@ -1698,12 +1839,20 @@
                 if (analysis.inspection_only) {
                     showToast(`Extracted ${analysis.ui_txt_rules?.length || 0} palette colors from uploaded map (palette-only inspection).`, 'success');
                 } else {
-                    showToast(`Detected ${analysis.detected_type} map values -> applied ${analysis.resolved_theme} palette & style!`, 'success');
+                    showToast(`Palette ready: ${analysis.resolved_theme}. Use Apply & Re-Paint to update the map.`, 'success');
                 }
             }
         }
 
         async function autoDetectMapColorsAndStyle(insideModal = false) {
+            cancelPaletteAnalysis();
+            document.getElementById('autoStyleFromMapToggle').checked = true;
+            const version = paletteAnalysisVersion;
+            const controller = new AbortController();
+            paletteAnalysisRequest = controller;
+            paletteAnalysisPending = true;
+            paletteAnalysisReady = false;
+            document.getElementById('restyleCurrentMapBtn').disabled = true;
             const state = getFormState();
             const btnIcon = document.getElementById('autoDetectMapIcon');
             if (btnIcon) btnIcon.className = 'fa-solid fa-circle-notch fa-spin text-[11px]';
@@ -1725,22 +1874,31 @@
 
                 const res = await fetch('/api/analyze_map', {
                     method: 'POST',
+                    signal: controller.signal,
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
+                if (version !== paletteAnalysisVersion) return;
                 if (!res.ok || data.status !== 'success') {
                     throw new Error(data.error || 'Could not analyze map');
                 }
                 applyAnalysisToFillingStudio(data.analysis, data.map_values, true);
+                paletteAnalysisReady = true;
                 if (!insideModal) {
                     openFillingStudio();
                 }
             } catch (err) {
+                if (version !== paletteAnalysisVersion || err.name === 'AbortError') return;
                 logToConsole(`[Auto-Style] ${err.message}`, 'warn');
                 showToast(err.message || 'Auto-detect failed', 'warn');
             } finally {
-                if (btnIcon) btnIcon.className = 'fa-solid fa-magnifying-glass-chart text-[11px]';
+                if (version === paletteAnalysisVersion) {
+                    paletteAnalysisRequest = null;
+                    paletteAnalysisPending = false;
+                    document.getElementById('restyleCurrentMapBtn').disabled = mapRepaintPending || !paletteAnalysisReady;
+                    if (btnIcon) btnIcon.className = 'fa-solid fa-magnifying-glass-chart text-[11px]';
+                }
             }
         }
 
@@ -1791,20 +1949,39 @@
             reader.readAsDataURL(file);
         }
 
+        function setMapRepaintBusy(busy) {
+            mapRepaintPending = busy;
+            const btn = document.getElementById('restyleCurrentMapBtn');
+            btn.disabled = busy || paletteAnalysisPending || !paletteAnalysisReady;
+            btn.setAttribute('aria-busy', String(busy));
+            document.getElementById('fillingPaletteTheme').disabled = busy;
+            document.getElementById('mapPaletteThemeSelect').disabled = busy;
+            document.getElementById('mapRepaintButtonLabel').textContent = busy
+                ? 'Re-painting…' : 'Apply & Re-Paint Current Map';
+            document.getElementById('mapRepaintIcon').className = busy
+                ? 'fa-solid fa-circle-notch animate-spin' : 'fa-solid fa-paintbrush';
+            document.getElementById('mapRepaintStatus').classList.toggle('hidden', !busy);
+        }
+
         async function restyleCurrentMapFromStudio() {
+            if (mapRepaintPending) return;
+            if (paletteAnalysisPending || !paletteAnalysisReady) {
+                showToast('Wait for palette analysis to finish, or retry Detect if it failed.', 'warn');
+                return;
+            }
             if (!lastMapValues || lastMapAnalysis?.inspection_only) {
                 showToast('Generate a map first to re-paint it live (uploaded images only extract palette colors).', 'warn');
                 return;
             }
             const state = getFormState();
-            const btn = document.getElementById('restyleCurrentMapBtn');
-            if (btn) btn.disabled = true;
+            setMapRepaintBusy(true);
             try {
                 const res = await fetch('/api/restyle_map', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         ...state,
+                        ...buildFillingDictionaries(),
                         auto_style: false,
                         map_values: lastMapValues
                     })
@@ -1818,15 +1995,22 @@
                 if (imgEl) {
                     imgEl.src = data.image_url;
                     imgEl.classList.remove('hidden');
+                    await imgEl.decode();
                 }
                 if (emptyEl) emptyEl.classList.add('hidden');
                 logToConsole('[Auto-Style] Re-painted active map with updated Color Filling Studio rules & typography style.', 'success');
+                try {
+                    const blob = await (await fetch(data.image_url)).blob();
+                    await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}));
+                } catch {
+                    logToConsole('[Storage] Map was re-painted, but could not be saved for Video Studio.', 'warn');
+                }
                 showToast('Map re-painted with new colors & label style!', 'success');
                 closeFillingStudio(false);
             } catch (err) {
                 showToast(err.message || 'Could not re-paint map', 'warn');
             } finally {
-                if (btn) btn.disabled = false;
+                setMapRepaintBusy(false);
             }
         }
 
@@ -1928,37 +2112,44 @@
 
         function updateTxtRule(idx, field, val) {
             if (!fillingTxtRules[idx]) return;
+            useManualFillingRules();
             fillingTxtRules[idx][field] = val;
             renderFillingStudio();
         }
 
         function addTextFillingRule() {
+            useManualFillingRules();
             fillingTxtRules.push({ key: "custom", hex: "#8b5cf6", alpha: 255 });
             renderFillingStudio();
         }
 
         function removeTxtRule(idx) {
+            useManualFillingRules();
             fillingTxtRules.splice(idx, 1);
             renderFillingStudio();
         }
 
         function updateNumRule(idx, field, val) {
             if (!fillingNumRules[idx]) return;
+            useManualFillingRules();
             fillingNumRules[idx][field] = field === 'hex' ? val : Number(val);
             renderFillingStudio();
         }
 
         function addNumFillingRule() {
+            useManualFillingRules();
             fillingNumRules.push({ low: 1000, high: 50000, hex: "#14b8a6", alpha: 255 });
             renderFillingStudio();
         }
 
         function removeNumRule(idx) {
+            useManualFillingRules();
             fillingNumRules.splice(idx, 1);
             renderFillingStudio();
         }
 
         function resetFillingDefaults() {
+            useManualFillingRules();
             fillingTxtRules = JSON.parse(JSON.stringify(DEFAULT_FILLING_TXT));
             fillingNumRules = JSON.parse(JSON.stringify(DEFAULT_FILLING_NUM));
             labelStyleConfig = {
@@ -2066,6 +2257,7 @@
             document.getElementById('modelSelect').value = s.model;
             document.getElementById('fontSelect').value = s.font;
             document.getElementById('topicInput').value = s.topic || '';
+            updateAiTemperature(s.temperature ?? DEFAULT_AI_TEMPERATURE);
 
             updateCommandPreview();
             showToast("Parameters restored from history", "info");
@@ -2098,6 +2290,7 @@
 
         // --- Reset Form ---
         function resetForm() {
+            updateAiTemperature(DEFAULT_AI_TEMPERATURE);
             document.querySelector('input[name="mode"][value="text"]').checked = true;
             document.querySelector('input[name="map_type"][value="default"]').checked = true;
             syncGsm(15);

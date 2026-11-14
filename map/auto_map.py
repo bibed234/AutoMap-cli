@@ -89,6 +89,42 @@ _PALETTE_THEMES: dict[str, tuple[tuple[int, int, int, int], ...]] = {
     "categorical": _AUTO_PALETTE + (
         (14, 165, 233, 255), (132, 204, 22, 255),
     ),
+    "greens": (
+        (187, 247, 208, 255), (134, 239, 172, 255), (74, 222, 128, 255),
+        (22, 163, 74, 255), (20, 83, 45, 255),
+    ),
+    "blues": (
+        (191, 219, 254, 255), (147, 197, 253, 255), (96, 165, 250, 255),
+        (37, 99, 235, 255), (30, 58, 138, 255),
+    ),
+    "reds": (
+        (254, 202, 202, 255), (252, 165, 165, 255), (248, 113, 113, 255),
+        (220, 38, 38, 255), (127, 29, 29, 255),
+    ),
+    "oranges": (
+        (254, 215, 170, 255), (253, 186, 116, 255), (251, 146, 60, 255),
+        (234, 88, 12, 255), (124, 45, 18, 255),
+    ),
+    "yellows": (
+        (254, 240, 138, 255), (253, 224, 71, 255), (250, 204, 21, 255),
+        (202, 138, 4, 255), (133, 77, 14, 255),
+    ),
+    "purples": (
+        (233, 213, 255, 255), (216, 180, 254, 255), (192, 132, 252, 255),
+        (147, 51, 234, 255), (88, 28, 135, 255),
+    ),
+    "teals": (
+        (153, 246, 228, 255), (94, 234, 212, 255), (45, 212, 191, 255),
+        (13, 148, 136, 255), (19, 78, 74, 255),
+    ),
+    "pinks": (
+        (251, 207, 232, 255), (249, 168, 212, 255), (244, 114, 182, 255),
+        (219, 39, 119, 255), (131, 24, 67, 255),
+    ),
+    "earth_tones": (
+        (231, 229, 176, 255), (194, 178, 128, 255), (163, 137, 87, 255),
+        (120, 113, 62, 255), (75, 85, 45, 255),
+    ),
 }
 
 _SEMANTIC_COLORS: dict[str, tuple[int, int, int, int]] = {
@@ -323,7 +359,8 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
              label_style: dict[str, object] | None = None,
              auto_style: bool | None = None,
              palette_theme: str = "auto",
-             ai_answer_override: dict[str, object] | None = None):
+             ai_answer_override: dict[str, object] | None = None,
+             temperature: float | None = None):
     """Create a map from an AI query and save it as ``result.png``.
 
     CLI options:
@@ -336,6 +373,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
       show_result      -- open the result in the OS image viewer (GUI only)
       io_res           -- save result in io (for web gui)
       api_key          -- optional Gemini API key (overrides env var for this run)
+      temperature      -- optional AI sampling randomness, from 0 to 2
     """
 
     # Reuse font objects across regions that share a label size.
@@ -428,7 +466,8 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     else:
         # Requesting information from AI
         log.step("Requesting data from AI")
-        ai_answer = ai_request(prompt, map_type, model, api_key)
+        ai_options = {} if temperature is None else {'temperature': temperature}
+        ai_answer = ai_request(prompt, map_type, model, api_key, **ai_options)
 
     if ai_answer is None:
         showerror("Error", "No information or bad info received from AI")
@@ -501,11 +540,10 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
             try:
                 info = ai_answer[name]
                 color = (random.randint(80, 255), random.randint(80, 255), random.randint(80, 255), 255)
-                try:
-                    num_value = int(info)
-                except (ValueError, TypeError):
+                parsed_value = _parse_short_number(info)
+                num_value = int(round(parsed_value)) if parsed_value is not None else None
+                if num_value is None:
                     log.warning(f"Non-numeric value for {name}: {info!r}; using random color")
-                    num_value = None
 
                 if num_value is not None:
                     # Pick the colour of the first matching range. Ranges are
@@ -532,7 +570,8 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
 
         elif mode == 'text':
             '''Text mode'''
-            info = str(ai_answer.get(name, "")).strip()
+            raw_info = ai_answer.get(name)
+            info = "" if raw_info is None else str(raw_info).strip()
             if not info:
                 log.info(f"No information for {name}, skipping")
                 continue
