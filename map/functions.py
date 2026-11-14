@@ -1,5 +1,8 @@
+import csv
+import io
 import json
 import math
+import re
 import sys
 from dotenv import load_dotenv
 from google import genai
@@ -160,6 +163,132 @@ def load_filling():
     
 
     return filling_txt, filling_num
+
+
+_SLUG_RE = re.compile(r'[^a-zA-Z0-9]+')
+
+BATCH_CSV_REQUIRED_COLUMNS: tuple[str, ...] = ("prompt",)
+BATCH_CSV_OPTIONAL_COLUMNS: tuple[str, ...] = (
+    "mode",
+    "map_type",
+    "gsm",
+    "extra_option",
+    "model",
+    "font",
+    "palette_theme",
+    "output",
+)
+BATCH_CSV_ALL_COLUMNS: tuple[str, ...] = BATCH_CSV_REQUIRED_COLUMNS + BATCH_CSV_OPTIONAL_COLUMNS
+_ALLOWED_MODES = frozenset({"text", "number"})
+_ALLOWED_MAP_TYPES = frozenset({"default", "flag", "world"})
+_ALLOWED_EXTRA_OPTIONS = frozenset({"none", "show_most_least", "short_form"})
+
+
+def slugify_prompt(prompt: str, max_len: int = 48) -> str:
+    """Convert a map prompt into a safe, concise filename stem."""
+    slug = _SLUG_RE.sub('_', prompt.strip().lower()).strip('_')
+    return (slug[:max_len].strip('_') or 'map')
+
+
+def parse_ideas_content(content: str, filename: str = "") -> list[dict[str, object]]:
+    """Parse and validate map ideas from a .csv file."""
+    if filename and Path(filename).suffix.lower() != ".csv":
+        raise ValueError("Only .csv files are supported for batch ideas.")
+
+    text = (content or "").lstrip("\ufeff").strip()
+    if not text:
+        raise ValueError("CSV file is empty.")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("CSV file is missing a header row.")
+
+    headers = [str(h).strip().lower() for h in reader.fieldnames]
+    if any(not h for h in headers):
+        raise ValueError("CSV header contains an empty column name.")
+
+    unknown_cols = [h for h in headers if h not in BATCH_CSV_ALL_COLUMNS]
+    if unknown_cols:
+        raise ValueError(
+            f"Unknown CSV column(s): {', '.join(unknown_cols)}. "
+            f"Allowed columns: {', '.join(BATCH_CSV_ALL_COLUMNS)}."
+        )
+
+    missing_cols = [c for c in BATCH_CSV_REQUIRED_COLUMNS if c not in headers]
+    if missing_cols:
+        raise ValueError(f"Missing required CSV column(s): {', '.join(missing_cols)}.")
+
+    reader.fieldnames = headers
+    ideas: list[dict[str, object]] = []
+    for row_num, row in enumerate(reader, start=2):
+        if None in row:
+            raise ValueError(f"Row {row_num}: malformed CSV row (unexpected extra columns).")
+
+        prompt = str(row.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError(f"Row {row_num}: 'prompt' is required and cannot be empty.")
+
+        entry: dict[str, object] = {"prompt": prompt}
+
+        mode_val = str(row.get("mode") or "").strip().lower()
+        if mode_val:
+            if mode_val not in _ALLOWED_MODES:
+                raise ValueError(
+                    f"Row {row_num}: invalid mode '{mode_val}'. Allowed: {', '.join(sorted(_ALLOWED_MODES))}."
+                )
+            entry["mode"] = mode_val
+
+        map_type_val = str(row.get("map_type") or "").strip().lower()
+        if map_type_val:
+            if map_type_val not in _ALLOWED_MAP_TYPES:
+                raise ValueError(
+                    f"Row {row_num}: invalid map_type '{map_type_val}'. Allowed: {', '.join(sorted(_ALLOWED_MAP_TYPES))}."
+                )
+            entry["map_type"] = map_type_val
+
+        extra_val = str(row.get("extra_option") or "").strip().lower()
+        if extra_val:
+            if extra_val not in _ALLOWED_EXTRA_OPTIONS:
+                raise ValueError(
+                    f"Row {row_num}: invalid extra_option '{extra_val}'. Allowed: {', '.join(sorted(_ALLOWED_EXTRA_OPTIONS))}."
+                )
+            entry["extra_option"] = extra_val
+
+        gsm_raw = str(row.get("gsm") or "").strip()
+        if gsm_raw:
+            try:
+                gsm_val = int(gsm_raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Row {row_num}: invalid gsm '{gsm_raw}'. Must be an integer between 1 and 100."
+                ) from exc
+            if gsm_val < 1 or gsm_val > 100:
+                raise ValueError(
+                    f"Row {row_num}: invalid gsm '{gsm_raw}'. Must be an integer between 1 and 100."
+                )
+            entry["gsm"] = gsm_val
+
+        for key in ("model", "font", "palette_theme", "output"):
+            val = str(row.get(key) or "").strip()
+            if val:
+                entry[key] = val
+
+        ideas.append(entry)
+
+    if not ideas:
+        raise ValueError("CSV file contains no data rows.")
+
+    return ideas
+
+
+def load_ideas_from_file(file_path: str | Path) -> list[dict[str, object]]:
+    """Read and parse map ideas from a .csv file."""
+    path = Path(file_path)
+    if path.suffix.lower() != ".csv":
+        raise ValueError("Only .csv files are supported for batch ideas.")
+    content = path.read_text(encoding="utf-8")
+    return parse_ideas_content(content, filename=path.name)
+
 
 
 

@@ -1,0 +1,2 @@
+prompt,mode,map_type,gsm,extra_option,model,font,palette_theme,output
+"Population density by country in Europe",number,default,15,none,gemini-3.8-flash,Bips.ttf,auto,europe_population.png
