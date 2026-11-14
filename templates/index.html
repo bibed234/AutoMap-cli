@@ -92,6 +92,15 @@
             from { transform: rotate(0deg); }
             to { transform: rotate(360deg); }
         }
+        @keyframes checkPopIn {
+            0% { transform: scale(0.25) rotate(-25deg); opacity: 0; }
+            65% { transform: scale(1.25) rotate(6deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .check-pop-in {
+            display: inline-block;
+            animation: checkPopIn 0.36s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
         .aurora-blob-1 {
             animation: auroraFloat 18s ease-in-out infinite;
         }
@@ -345,6 +354,38 @@
                                     <i class="fa-solid fa-tree text-[10px] text-sky-400 group-hover:scale-110 transition-transform"></i>
                                     <span>Forest coverage (World)</span>
                                 </button>
+                            </div>
+                        </div>
+
+                        <!-- Batch Generation: Ideas from File -->
+                        <div class="mt-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-[11px] font-medium text-slate-300 flex items-center gap-1.5">
+                                    <i class="fa-solid fa-file-lines text-emerald-400 text-[11px]"></i>
+                                    Ideas from File (.txt, .csv, .json)
+                                </span>
+                                <span id="ideasFileBadge" class="text-[10px] font-mono text-slate-500 truncate max-w-[140px]">No file</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <label for="ideasFileInput" class="flex-1 cursor-pointer px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-[11px] font-medium text-slate-300 hover:text-white transition text-center truncate">
+                                    <i class="fa-solid fa-upload mr-1 text-indigo-400"></i>
+                                    Choose Ideas File
+                                </label>
+                                <input type="file" id="ideasFileInput" accept=".txt,.md,.csv,.json" class="hidden" onchange="handleIdeasFileSelected(event)">
+                                <button type="button" id="generateBatchBtn" onclick="generateMapsFromFile()" disabled
+                                    class="px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-semibold text-white transition flex items-center gap-1.5">
+                                    <i class="fa-solid fa-layer-group text-[10px]"></i>
+                                    <span>Generate All</span>
+                                </button>
+                            </div>
+                            <div id="batchResultsPanel" class="hidden pt-2 border-t border-slate-800/80 space-y-1.5">
+                                <div class="flex items-center justify-between">
+                                    <span id="batchResultsSummary" class="text-[10px] font-mono text-emerald-300">0 maps ready</span>
+                                    <button type="button" onclick="downloadAllBatchResults()" class="text-[10px] font-semibold px-2 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 transition">
+                                        <i class="fa-solid fa-download mr-1"></i>Download All
+                                    </button>
+                                </div>
+                                <div id="batchResultsList" class="space-y-1 max-h-36 overflow-y-auto pr-1"></div>
                             </div>
                         </div>
                     </div>
@@ -1316,6 +1357,152 @@
             updateCommandPreview();
         }
 
+        let loadedIdeasFile = { filename: '', text: '' };
+        let lastBatchResults = [];
+
+        function renderBatchResultsPanel(results) {
+            lastBatchResults = Array.isArray(results) ? results : [];
+            const panel = document.getElementById('batchResultsPanel');
+            const summary = document.getElementById('batchResultsSummary');
+            const list = document.getElementById('batchResultsList');
+            if (!panel || !list) return;
+            if (lastBatchResults.length === 0) {
+                panel.classList.add('hidden');
+                list.innerHTML = '';
+                return;
+            }
+            panel.classList.remove('hidden');
+            if (summary) {
+                summary.textContent = `${lastBatchResults.length} map${lastBatchResults.length === 1 ? '' : 's'} ready`;
+            }
+            list.innerHTML = lastBatchResults.map((item, idx) => `
+                <div class="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-900/90 border border-slate-800 hover:border-indigo-500/50 transition">
+                    <button type="button" onclick="selectBatchResult(${idx})" class="flex-1 text-left text-[11px] font-mono text-slate-200 hover:text-indigo-300 truncate" title="${item.prompt.replace(/"/g, '&quot;')}">
+                        ${item.index}. ${item.prompt}
+                    </button>
+                    <button type="button" onclick="downloadBatchResult(${idx})" title="Download ${item.filename}" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-emerald-600/30 text-slate-300 hover:text-emerald-300 transition">
+                        <i class="fa-solid fa-download"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function selectBatchResult(idx) {
+            const item = lastBatchResults[idx];
+            if (!item || !item.image_url) return;
+            const imgEl = document.getElementById('serverMapImage');
+            const emptyEl = document.getElementById('emptyState');
+            if (imgEl) {
+                imgEl.src = item.image_url;
+                imgEl.classList.remove('hidden');
+            }
+            if (emptyEl) emptyEl.classList.add('hidden');
+            if (item.analysis) {
+                applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
+            }
+            showToast(`Viewing #${item.index}: ${item.prompt}`, 'info');
+        }
+
+        function downloadBatchResult(idx) {
+            const item = lastBatchResults[idx];
+            if (!item || !item.image_url) return;
+            const a = document.createElement('a');
+            a.href = item.image_url;
+            a.download = item.filename || `map_${idx + 1}.png`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        }
+
+        function downloadAllBatchResults() {
+            if (!lastBatchResults.length) return;
+            lastBatchResults.forEach((item, idx) => {
+                setTimeout(() => downloadBatchResult(idx), idx * 180);
+            });
+            showToast(`Downloading ${lastBatchResults.length} maps...`, 'success');
+        }
+
+        async function handleIdeasFileSelected(event) {
+            const file = event.target?.files?.[0];
+            const badge = document.getElementById('ideasFileBadge');
+            const btn = document.getElementById('generateBatchBtn');
+            if (!file) {
+                loadedIdeasFile = { filename: '', text: '' };
+                if (badge) badge.textContent = 'No file';
+                if (btn) btn.disabled = true;
+                return;
+            }
+            try {
+                const text = await file.text();
+                loadedIdeasFile = { filename: file.name, text };
+                if (badge) badge.textContent = file.name;
+                if (btn) btn.disabled = !text.trim();
+                logToConsole(`[Batch] Loaded ideas file "${file.name}" (${text.length} chars). Click "Generate All" to render.`, 'info');
+                showToast(`Loaded "${file.name}" — ready to generate maps!`, 'info');
+            } catch (err) {
+                showToast(`Failed to read file: ${err.message}`, 'error');
+            }
+        }
+
+        async function generateMapsFromFile() {
+            if (!loadedIdeasFile.text.trim()) {
+                showToast('Choose an ideas file first (.txt, .csv, or .json)', 'warn');
+                return;
+            }
+            const state = getFormState();
+            const btn = document.getElementById('generateBatchBtn');
+            const loadingEl = document.getElementById('loadingOverlay');
+            if (btn) btn.disabled = true;
+            if (loadingEl) loadingEl.classList.remove('hidden');
+            startLoadingStages();
+
+            try {
+                const res = await fetch('/api/generate_batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...state,
+                        filename: loadedIdeasFile.filename,
+                        ideas_text: loadedIdeasFile.text
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'success') {
+                    throw new Error(data.error || 'Batch generation failed');
+                }
+
+                const okItems = (data.results || []).filter(r => r.status === 'success' && r.image_url);
+                okItems.forEach(item => {
+                    addToHistory(
+                        { ...state, topic: item.prompt },
+                        `[batch] ${item.filename}`,
+                        {
+                            image_url: item.image_url,
+                            analysis: item.analysis || null,
+                            map_values: item.map_values || null,
+                        }
+                    );
+                    logToConsole(`[Batch ${item.index}/${data.total}] Generated "${item.prompt}" -> ${item.filename}`, 'success');
+                });
+                (data.results || []).filter(r => r.status !== 'success').forEach(item => {
+                    logToConsole(`[Batch ${item.index}/${data.total}] Failed "${item.prompt}": ${item.error}`, 'warn');
+                });
+
+                renderBatchResultsPanel(okItems);
+                if (okItems.length > 0) {
+                    selectBatchResult(okItems.length - 1);
+                }
+                showToast(`Generated ${data.succeeded}/${data.total} maps from "${loadedIdeasFile.filename}"!`, 'success');
+            } catch (err) {
+                logToConsole(`[Batch Error] ${err.message}`, 'error');
+                showToast(err.message || 'Batch generation failed', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+                if (loadingEl) loadingEl.classList.add('hidden');
+                clearInterval(loadingTimerInterval);
+            }
+        }
+
         // --- Get Current Form Values ---
         function buildFillingDictionaries() {
             const filling_txt = {};
@@ -1521,6 +1708,7 @@
             const s3 = document.getElementById('loadStage3');
 
             const startTime = performance.now();
+            let currentStage = 1;
             clearInterval(loadingTimerInterval);
 
             if (s1 && s2 && s3) {
@@ -1533,19 +1721,21 @@
             }
 
             loadingTimerInterval = setInterval(() => {
-                const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-                if (timerEl) timerEl.textContent = `${elapsed}s`;
+                const elapsedNum = (performance.now() - startTime) / 1000;
+                if (timerEl) timerEl.textContent = `${elapsedNum.toFixed(1)}s`;
 
-                if (elapsed >= 2.2 && elapsed < 4.8 && s1 && s2) {
+                if (elapsedNum >= 2.2 && currentStage < 2 && s1 && s2) {
+                    currentStage = 2;
                     stepText.textContent = 'Flood-filling regions and applying palette rules...';
                     s1.className = 'flex items-center justify-between text-emerald-400';
-                    s1.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-check text-[10px]"></i> 1. AI Geospatial Query</span><span class="text-[10px]">Done</span>';
+                    s1.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-check check-pop-in text-[10px]"></i> 1. AI Geospatial Query</span><span class="text-[10px]">Done</span>';
                     s2.className = 'flex items-center justify-between text-indigo-300';
                     s2.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i> 2. Region Flood-Fill &amp; Palette</span><span class="text-[10px]">Running</span>';
-                } else if (elapsed >= 4.8 && s2 && s3) {
+                } else if (elapsedNum >= 4.8 && currentStage < 3 && s2 && s3) {
+                    currentStage = 3;
                     stepText.textContent = 'Compositing relief shading, borders & custom typography...';
                     s2.className = 'flex items-center justify-between text-emerald-400';
-                    s2.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-check text-[10px]"></i> 2. Region Flood-Fill &amp; Palette</span><span class="text-[10px]">Done</span>';
+                    s2.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-check check-pop-in text-[10px]"></i> 2. Region Flood-Fill &amp; Palette</span><span class="text-[10px]">Done</span>';
                     s3.className = 'flex items-center justify-between text-indigo-300';
                     s3.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i> 3. Relief &amp; Typography Composite</span><span class="text-[10px]">Running</span>';
                 }
@@ -1621,7 +1811,11 @@
                     if (emptyEl) emptyEl.classList.add('hidden');
 
                     metaBadge.textContent = `Generated (${new Date().toLocaleTimeString()})`;
-                    addToHistory(state, cmd);
+                    addToHistory(state, cmd, {
+                        image_url: result.image_url,
+                        analysis: result.analysis || null,
+                        map_values: result.map_values || null,
+                    });
                     try {
                         const blob = await (await fetch(result.image_url)).blob();
                         await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}));
@@ -2225,22 +2419,28 @@
             showToast("Run history cleared", "info");
         }
 
-        function addToHistory(state, cmd) {
+        function addToHistory(state, cmd, extra = {}) {
             runHistory.unshift({
                 time: new Date().toLocaleTimeString(),
                 state: { ...state },
-                cmd
+                cmd,
+                image_url: extra.image_url || null,
+                analysis: extra.analysis || null,
+                map_values: extra.map_values || null
             });
             document.getElementById('historyCountBadge').textContent = runHistory.length;
 
             const list = document.getElementById('historyList');
             list.innerHTML = runHistory.map((item, idx) => `
-                <div onclick="restoreHistoryItem(${idx})" class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-indigo-500/60 cursor-pointer transition flex flex-col justify-between gap-1.5">
-                    <div class="flex items-center justify-between text-[11px]">
-                        <span class="font-mono text-indigo-400 font-semibold">${item.state.map_type} / ${item.state.mode}</span>
-                        <span class="text-slate-500">${item.time}</span>
+                <div onclick="restoreHistoryItem(${idx})" class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-indigo-500/60 cursor-pointer transition flex items-center gap-2.5">
+                    ${item.image_url ? `<img src="${item.image_url}" alt="Map preview" class="w-11 h-11 rounded-lg object-cover border border-slate-700/80 shrink-0 bg-slate-950">` : ''}
+                    <div class="min-w-0 flex-1 flex flex-col justify-between gap-1">
+                        <div class="flex items-center justify-between text-[11px]">
+                            <span class="font-mono text-indigo-400 font-semibold">${item.state.map_type} / ${item.state.mode}</span>
+                            <span class="text-slate-500">${item.time}</span>
+                        </div>
+                        <div class="text-[11px] font-mono text-slate-400 truncate">${item.cmd}</div>
                     </div>
-                    <div class="text-[11px] font-mono text-slate-400 truncate">${item.cmd}</div>
                 </div>
             `).join('');
         }
@@ -2250,17 +2450,35 @@
             if (!item) return;
 
             const s = item.state;
-            document.querySelector(`input[name="mode"][value="${s.mode}"]`).checked = true;
-            document.querySelector(`input[name="map_type"][value="${s.map_type}"]`).checked = true;
+            const modeRadio = document.querySelector(`input[name="mode"][value="${s.mode}"]`);
+            if (modeRadio) modeRadio.checked = true;
+            const mapRadio = document.querySelector(`input[name="map_type"][value="${s.map_type}"]`);
+            if (mapRadio) mapRadio.checked = true;
             syncGsm(s.gsm);
-            document.querySelector(`input[name="extra_option"][value="${s.extra_option}"]`).checked = true;
+            const eopRadio = document.querySelector(`input[name="extra_option"][value="${s.extra_option}"]`);
+            if (eopRadio) eopRadio.checked = true;
             document.getElementById('modelSelect').value = s.model;
             document.getElementById('fontSelect').value = s.font;
             document.getElementById('topicInput').value = s.topic || '';
             updateAiTemperature(s.temperature ?? DEFAULT_AI_TEMPERATURE);
 
+            if (item.image_url) {
+                const imgEl = document.getElementById('serverMapImage');
+                const emptyEl = document.getElementById('emptyState');
+                const metaBadge = document.getElementById('mapMetaBadge');
+                if (imgEl) {
+                    imgEl.src = item.image_url;
+                    imgEl.classList.remove('hidden');
+                }
+                if (emptyEl) emptyEl.classList.add('hidden');
+                if (metaBadge) metaBadge.textContent = `Restored (${item.time})`;
+                if (item.analysis) {
+                    applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
+                }
+            }
+
             updateCommandPreview();
-            showToast("Parameters restored from history", "info");
+            showToast(item.image_url ? "Map & parameters restored from history" : "Parameters restored from history", "info");
         }
 
         function switchBottomTab(tab) {

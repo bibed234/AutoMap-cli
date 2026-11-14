@@ -54,7 +54,7 @@ from map.auto_map import (
     _to_rgba_tuple,
 )
 from map.constants import europe_coords, world_coords
-from map.functions import validate_temperature
+from map.functions import parse_ideas_content, slugify_prompt, validate_temperature
 
 from flask import Flask, request, jsonify, send_file, render_template, Response
 
@@ -492,6 +492,140 @@ def generate():
         )
 
     return jsonify(resp_payload)
+
+
+@app.route('/api/generate_batch/', methods=['POST'])
+@app.route('/api/generate_batch', methods=['POST'])
+def generate_batch():
+    """Generate multiple maps from an uploaded ideas file (.txt, .csv, .json)."""
+    if request.files and "file" in request.files:
+        uploaded = request.files["file"]
+        filename = uploaded.filename or ""
+        ideas_text = uploaded.read().decode("utf-8", errors="replace")
+        data: dict[str, object] = dict(request.form)
+    else:
+        data = request.get_json(silent=True) or {}
+        filename = str(data.get("filename") or "")
+        ideas_text = str(data.get("ideas_text") or "")
+
+    api_key = str(data.get("api_key") or "").strip() or None
+    if needs_api_key and not api_key:
+        return jsonify({
+            "status": "error",
+            "error": "API key required. Provide GEMINI_API_KEY via .env or the web form.",
+        }), 400
+
+    try:
+        ideas = parse_ideas_content(ideas_text, filename=filename)
+    except ValueError as err:
+        return jsonify({"status": "error", "error": str(err)}), 400
+
+    if not ideas:
+        return jsonify({"status": "error", "error": "No valid map ideas found in the uploaded file."}), 400
+
+    default_font, default_eop, default_gsm = _parse_render_params(data)
+    default_mode = str(data.get("mode") or "text").lower()
+    default_map_type = str(data.get("map_type") or "default").lower()
+    default_model = str(data.get("model") or "gemini-2.5-flash")
+    available_fonts = set(_available_fonts())
+
+    base_style_kwargs: dict[str, object] = {}
+    for style_key, kw_name in (
+        ("filling_txt", "filling_txt_override"),
+        ("filling_num", "filling_num_override"),
+        ("label_style", "label_style"),
+        ("auto_style", "auto_style"),
+        ("palette_theme", "palette_theme"),
+    ):
+        if style_key in data:
+            base_style_kwargs[kw_name] = data[style_key]
+
+    results: list[dict[str, object]] = []
+    succeeded = 0
+
+    for idx, idea in enumerate(ideas, start=1):
+        prompt = str(idea["prompt"])
+        item_mode = str(idea.get("mode") or default_mode).lower()
+        item_map_type = str(idea.get("map_type") or default_map_type).lower()
+        item_gsm = int(idea.get("gsm", default_gsm))
+        raw_eop = str(idea.get("extra_option") or default_eop or "none").lower()
+        item_eop = None if raw_eop in ("none", "") else raw_eop
+        item_model = str(idea.get("model") or default_model)
+        item_font = str(idea.get("font") or default_font)
+        if item_font not in available_fonts:
+            item_font = default_font
+
+        item_style_kwargs = dict(base_style_kwargs)
+        if "palette_theme" in idea:
+            item_style_kwargs["palette_theme"] = idea["palette_theme"]
+
+        custom_out = str(idea.get("output") or "").strip()
+        out_filename = Path(custom_out).name if custom_out else f"{idx:02d}_{slugify_prompt(prompt)}.png"
+        if not out_filename.lower().endswith(".png"):
+            out_filename += ".png"
+
+        try:
+            buffer = auto_map(
+                prompt=prompt,
+                mode=item_mode,
+                map_type=item_map_type,
+                size_mod=item_gsm,
+                optional_feature=item_eop,
+                model=item_model,
+                font_name=item_font,
+                show_result=False,
+                io_res=True,
+                api_key=api_key,
+                **item_style_kwargs,
+            )
+        except Exception as err:  # noqa: BLE001
+            results.append({
+                "index": idx,
+                "prompt": prompt,
+                "filename": out_filename,
+                "status": "error",
+                "error": str(err),
+            })
+            continue
+
+        if buffer is None:
+            results.append({
+                "index": idx,
+                "prompt": prompt,
+                "filename": out_filename,
+                "status": "error",
+                "error": "Map generation failed.",
+            })
+            continue
+
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        item_payload: dict[str, object] = {
+            "index": idx,
+            "prompt": prompt,
+            "filename": out_filename,
+            "status": "success",
+            "image_url": f"data:image/png;base64,{encoded}",
+        }
+        render_meta = getattr(buffer, "map_meta", None)
+        ai_vals = render_meta.get("ai_answer") if isinstance(render_meta, dict) else None
+        if isinstance(ai_vals, dict) and ai_vals:
+            item_payload["map_values"] = ai_vals
+            item_payload["analysis"] = _build_analysis_from_ai(
+                ai_vals,
+                mode=item_mode,
+                palette_theme=str(item_style_kwargs.get("palette_theme") or "auto"),
+                topic=prompt,
+                render_meta=render_meta,
+            )
+        results.append(item_payload)
+        succeeded += 1
+
+    return jsonify({
+        "status": "success" if succeeded > 0 else "error",
+        "total": len(ideas),
+        "succeeded": succeeded,
+        "results": results,
+    }), (200 if succeeded > 0 else 500)
 
 
 @app.route('/api/restyle_map/', methods=['POST'])

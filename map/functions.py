@@ -1,5 +1,8 @@
+import csv
+import io
 import json
 import math
+import re
 import sys
 from dotenv import load_dotenv
 from google import genai
@@ -160,6 +163,89 @@ def load_filling():
     
 
     return filling_txt, filling_num
+
+
+_BULLET_PREFIX_RE = re.compile(r'^(?:[-*]|\d+[.)])\s+')
+_SLUG_RE = re.compile(r'[^a-zA-Z0-9]+')
+
+
+def slugify_prompt(prompt: str, max_len: int = 48) -> str:
+    """Convert a map prompt into a safe, concise filename stem."""
+    slug = _SLUG_RE.sub('_', prompt.strip().lower()).strip('_')
+    return (slug[:max_len].strip('_') or 'map')
+
+
+def _normalize_idea_entry(raw: object) -> dict[str, object] | None:
+    """Normalize a string or mapping idea entry into a standard dict."""
+    if isinstance(raw, str):
+        prompt = raw.strip()
+        return {"prompt": prompt} if prompt else None
+    if isinstance(raw, dict):
+        prompt = str(raw.get("prompt") or raw.get("topic") or raw.get("idea") or "").strip()
+        if not prompt:
+            return None
+        entry: dict[str, object] = {"prompt": prompt}
+        for key in ("mode", "map_type", "extra_option", "model", "font", "output", "palette_theme"):
+            val = raw.get(key)
+            if val is not None and str(val).strip() != "":
+                entry[key] = str(val).strip()
+        if raw.get("gsm") is not None and str(raw.get("gsm")).strip() != "":
+            try:
+                entry["gsm"] = int(raw["gsm"])
+            except (TypeError, ValueError):
+                pass
+        return entry
+    return None
+
+
+def parse_ideas_content(content: str, filename: str = "") -> list[dict[str, object]]:
+    """Parse map ideas from .txt, .md, .csv, or .json content."""
+    text = (content or "").lstrip("\ufeff").strip()
+    if not text:
+        return []
+
+    ext = Path(filename).suffix.lower() if filename else ""
+
+    if ext == ".json" or (not ext and text[0] in "[{"):
+        try:
+            loaded = json.loads(text)
+            if isinstance(loaded, dict) and isinstance(loaded.get("ideas"), list):
+                loaded = loaded["ideas"]
+            if isinstance(loaded, list):
+                ideas = [item for raw in loaded if (item := _normalize_idea_entry(raw)) is not None]
+                return ideas
+        except json.JSONDecodeError:
+            if ext == ".json":
+                raise ValueError("Invalid JSON in ideas file.")
+
+    if ext == ".csv":
+        reader = csv.DictReader(io.StringIO(text))
+        if reader.fieldnames:
+            ideas: list[dict[str, object]] = []
+            for row in reader:
+                norm_row = {str(k).strip().lower(): v for k, v in row.items() if k is not None}
+                entry = _normalize_idea_entry(norm_row)
+                if entry is not None:
+                    ideas.append(entry)
+            return ideas
+
+    ideas_txt: list[dict[str, object]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = _BULLET_PREFIX_RE.sub("", line).strip()
+        if line:
+            ideas_txt.append({"prompt": line})
+    return ideas_txt
+
+
+def load_ideas_from_file(file_path: str | Path) -> list[dict[str, object]]:
+    """Read and parse map ideas from a .txt, .md, .csv, or .json file."""
+    path = Path(file_path)
+    content = path.read_text(encoding="utf-8")
+    return parse_ideas_content(content, filename=path.name)
+
 
 
 

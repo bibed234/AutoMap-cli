@@ -141,6 +141,122 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
         raise click.ClickException("Map generation failed. See errors above.")
 
 
+@main.command()
+@click.argument("ideas_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("-o", "--output-dir",
+              "output_dir",
+              type=click.Path(file_okay=False, path_type=Path),
+              default=Path("output_maps"),
+              show_default=True,
+              help="Directory where generated PNG maps will be saved.")
+@click.option("-m", "--mode",
+              type=click.Choice(["text", "number"], case_sensitive=False),
+              default="text",
+              show_default=True,
+              help="Default data mode: text (default) or number.")
+@click.option("-mp", "--map-type",
+              "map_type",
+              type=click.Choice(["default", "flag", "world"], case_sensitive=False),
+              default="default",
+              show_default=True,
+              help="Default map type: default, flag or world.")
+@click.option("-gsm", "--global-size-modifier",
+              "size_mod",
+              type=int,
+              default=15,
+              show_default=True,
+              help="Default global font size modifier (default 15).")
+@click.option("-eop", "--extra-option",
+              "optional_feature",
+              type=click.Choice(["none", "show_most_least", "short_form"], case_sensitive=False),
+              default="none",
+              show_default=True,
+              help="Default extra option: none, show_most_least or short_form.")
+@click.option("--model",
+              type=click.Choice(AVAILABLE_MODELS, case_sensitive=False),
+              default=AVAILABLE_MODELS[0],
+              show_default=True,
+              help="Default AI model to use.")
+@click.option("--font",
+              "font_name",
+              type=click.Choice(_available_fonts(), case_sensitive=True),
+              default="Bips.ttf",
+              show_default=True,
+              help="Default font file name from resources/fonts.")
+@click.option("-v", "--verbose",
+              is_flag=True,
+              default=False,
+              help="Print detailed progress output.")
+@click.option("--key",
+              "api_key",
+              default=None,
+              help="Gemini API key for this run (overrides GEMINI_API_KEY env var).")
+def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, model, font_name, verbose, api_key):
+    """Generate multiple maps from ideas listed in IDEAS_FILE (.txt, .csv, or .json)."""
+    from map import log
+    from map.auto_map import auto_map
+    from map.functions import load_ideas_from_file, slugify_prompt
+
+    log.set_verbose(verbose)
+    if api_key:
+        os.environ["GEMINI_API_KEY"] = api_key
+
+    try:
+        ideas = load_ideas_from_file(ideas_file)
+    except ValueError as err:
+        raise click.ClickException(str(err)) from err
+
+    if not ideas:
+        raise click.ClickException(f"No valid map ideas found in {ideas_file}.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    available_fonts = set(_available_fonts())
+    succeeded = 0
+
+    for idx, idea in enumerate(ideas, start=1):
+        prompt = str(idea["prompt"])
+        item_mode = str(idea.get("mode") or mode).lower()
+        item_map_type = str(idea.get("map_type") or map_type).lower()
+        item_size_mod = int(idea.get("gsm", size_mod))
+        raw_eop = str(idea.get("extra_option") or optional_feature).lower()
+        item_feature = None if raw_eop == "none" else raw_eop
+        item_model = str(idea.get("model") or model)
+        item_font = str(idea.get("font") or font_name)
+        if item_font not in available_fonts:
+            item_font = font_name
+
+        log.step(f"[{idx}/{len(ideas)}] Generating map: {prompt}")
+        buffer = auto_map(
+            prompt=prompt,
+            mode=item_mode,
+            map_type=item_map_type,
+            size_mod=item_size_mod,
+            optional_feature=item_feature,
+            model=item_model,
+            font_name=item_font,
+            show_result=False,
+            io_res=True,
+            api_key=api_key,
+        )
+        if buffer is None:
+            log.warning(f"[{idx}/{len(ideas)}] Failed to generate map for: {prompt}")
+            continue
+
+        custom_out = str(idea.get("output") or "").strip()
+        filename = Path(custom_out).name if custom_out else f"{idx:02d}_{slugify_prompt(prompt)}.png"
+        if not filename.lower().endswith(".png"):
+            filename += ".png"
+        target = output_dir / filename
+        target.write_bytes(buffer.getvalue())
+        succeeded += 1
+        log.success(f"Saved {target}")
+
+    if succeeded == 0:
+        raise click.ClickException("All batch map generations failed.")
+
+    log.finished(f"Generated {succeeded}/{len(ideas)} maps in {output_dir}")
+
+
 if __name__ == "__main__":
     main()
 
