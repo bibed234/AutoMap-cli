@@ -226,6 +226,10 @@ def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, mo
             item_font = font_name
 
         log.step(f"[{idx}/{len(ideas)}] Generating map: {prompt}")
+        style_options = {}
+        if "palette_theme" in idea:
+            style_options["palette_theme"] = idea["palette_theme"]
+            style_options["auto_style"] = True
         buffer = auto_map(
             prompt=prompt,
             mode=item_mode,
@@ -237,6 +241,7 @@ def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, mo
             show_result=False,
             io_res=True,
             api_key=api_key,
+            **style_options,
         )
         if buffer is None:
             log.warning(f"[{idx}/{len(ideas)}] Failed to generate map for: {prompt}")

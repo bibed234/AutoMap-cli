@@ -44,3 +44,4 @@ coverage.xml
 htmlcov/
 test-results/
 playwright-report/
+instance/

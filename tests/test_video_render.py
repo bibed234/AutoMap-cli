@@ -1,5 +1,6 @@
 import base64
 import io
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -84,6 +85,8 @@ def test_portrait_render_with_centered_title_and_right_aligned_map(worker, tmp_p
         'duration': 1, 'include_audio': False,
     })
     assert response.status_code == 200, response.json
+    assert response.json['download_url'].isascii()
+    assert parse_qs(urlsplit(response.json['download_url']).query)['path'] == [response.json['file_path']]
     with VideoFileClip(response.json['file_path']) as result:
         assert result.size == [1080, 1920]
         assert result.audio is None

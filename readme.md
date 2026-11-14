@@ -103,6 +103,32 @@ python main.py
 
 Then open <http://127.0.0.1:5000/> in your browser. If no key is found in `.env`, the UI prompts you to paste one; otherwise it uses the key from `.env` automatically.
 
+With `SERVER=TRUE`, sign in with `deltaaa` / `deltaaa00!`, or set `WEB_LOGIN` and `WEB_PASSWORD` in the environment or `.env` to use your own credentials. Environment values take precedence. The browser remembers your sign-in for up to a year. Changing the credentials invalidates existing sessions. In development mode, pages and APIs open without login.
+
+The entered Google API key, last map topic, and palette are remembered in the same browser. Browser storage must remain enabled to keep these preferences between visits.
+
+### Running on a server
+
+Install the updated dependencies and set `SERVER=TRUE` in the environment or `.env`, then run `python main.py`. This starts the production Waitress server with debugging disabled. Without `SERVER=TRUE`, the Flask development server runs with debugging enabled. `PORT` defaults to `5000` for the web service and `8080` for the media worker.
+
+For Docker, set `SERVER=TRUE` in `.env`, run `docker compose up --build -d`, and open port `3000`. Compose forwards this switch to both services and keeps the media worker private to the Docker network. It passes `WEB_LOGIN`, `WEB_PASSWORD`, `WEB_SECRET_KEY`, and `GEMINI_API_KEY` from your environment or `.env` to the web container. Only the exact value `TRUE` activates production mode.
+
+You can use the server's exported environment variables directly; no `.env` file or code changes are required:
+
+```bash
+export SERVER=TRUE
+export WEB_LOGIN='your-username'
+export WEB_PASSWORD='your-password'
+# Optional: export GEMINI_API_KEY='your-key'
+docker compose up -d --build
+```
+
+Compose reads the environment of the process that launches it. Export these variables in the launching shell, or supply them through the service manager running Compose. Environment values override `.env`. After changing variables, run `docker compose up -d` again to recreate affected containers; `docker compose restart` keeps the old values. Direct `python main.py` launches read the same exported variables.
+
+Both containers restart automatically after a failure or host reboot, unless manually stopped. For a deployment outside Compose, set `YTDLP_URL` to the worker address (for example `http://127.0.0.1:8080`); its default is `http://yt-dlp-worker:8080`.
+
+Session signing uses a generated secret in `instance/web-session-secret`; retain this file across restarts. Compose stores it in the `automap-session` volume. Alternatively, set a stable, random `WEB_SECRET_KEY` on every instance. Removing the secret file or volume, or changing the secret, requires signing in again. Serve the public site over HTTPS to protect the login and API key in transit.
+
 ### CLI
 
 Generate a map straight from the terminal:

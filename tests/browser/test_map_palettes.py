@@ -297,3 +297,33 @@ def test_temperature_defaults_to_point_seven_five_and_can_be_reset(map_page):
     assert page.locator('#aiTemperature').input_value() == '0.75'
     page.reload()
     assert page.locator('#aiTemperatureValue').inner_text() == '0.75'
+
+
+def test_api_key_and_topic_survive_reload_and_can_be_cleared(map_page):
+    page = map_page
+    page.evaluate('closeFillingStudio()')
+    page.locator('#apiKeyInput').fill('AIza-test-browser-key')
+    page.locator('#topicInput').fill('Population of European countries')
+    page.select_option('#mapPaletteThemeSelect', 'oceanic')
+    page.reload()
+    assert page.locator('#apiKeyInput').input_value() == 'AIza-test-browser-key'
+    assert page.locator('#apiKeyInput').get_attribute('type') == 'password'
+    assert page.locator('#topicInput').input_value() == 'Population of European countries'
+    assert page.locator('#mapPaletteThemeSelect').input_value() == 'oceanic'
+    page.locator('#apiKeyInput').fill('')
+    page.evaluate('clearTopicInput()')
+    page.reload()
+    assert page.locator('#apiKeyInput').input_value() == ''
+    assert page.locator('#topicInput').input_value() == ''
+
+
+def test_map_inputs_work_when_browser_storage_is_blocked(map_page):
+    page = map_page
+    page.add_init_script('''Object.defineProperty(window, 'localStorage', {
+        get() { throw new DOMException('Storage blocked', 'SecurityError'); }
+    });''')
+    page.reload()
+    page.locator('#apiKeyInput').fill('test-key')
+    page.locator('#topicInput').fill('Test topic')
+    assert page.evaluate('getFormState().api_key') == 'test-key'
+    assert 'Test topic' in page.locator('#cliCommandDisplay').inner_text()

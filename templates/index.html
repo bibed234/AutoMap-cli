@@ -249,6 +249,12 @@
                     <span>Video Studio</span>
                     <i class="fa-solid fa-arrow-right text-[10px] opacity-75 group-hover:translate-x-0.5 transition-transform"></i>
                 </a>
+                {% if config.WEB_AUTH_ENABLED and session.get('web_identity') %}
+                <form method="post" action="{{ url_for('web_logout') }}">
+                    <input type="hidden" name="csrf_token" value="{{ session.get('logout_csrf', '') }}">
+                    <button type="submit" class="px-3 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-medium">Log out</button>
+                </form>
+                {% endif %}
             </div>
         </div>
     </header>
@@ -289,7 +295,7 @@
                                 <i class="fa-solid fa-key text-amber-400"></i>
                                 Gemini API Key (required — no .env found)
                             </label>
-                            <span class="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">Session Only</span>
+                            <span class="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">Saved in browser</span>
                         </div>
                         <div class="relative">
                             <input type="password" id="apiKeyInput" placeholder="Paste your Gemini API key (AIza...)..."
@@ -302,7 +308,7 @@
                         </div>
                         <p class="text-[11px] text-amber-300/75 mt-1.5 flex items-center gap-1">
                             <i class="fa-solid fa-shield-halved text-[10px]"></i>
-                            <span>Used only for this request and never persisted to disk.</span>
+                            <span>Saved in this browser for your next visit. Clear this field to remove the saved key.</span>
                         </p>
                     </div>
 
@@ -1186,10 +1192,13 @@
         let mapRepaintPending = false;
         const MAP_PALETTE_STORAGE_KEY = 'automap-map-palette-theme';
         const AI_TEMPERATURE_STORAGE_KEY = 'automap-ai-temperature';
+        const API_KEY_STORAGE_KEY = 'automap-gemini-api-key';
+        const MAP_TOPIC_STORAGE_KEY = 'automap-map-topic';
         const DEFAULT_AI_TEMPERATURE = 0.75;
 
         // --- Initialize on Load ---
         window.addEventListener('DOMContentLoaded', () => {
+            restoreSavedMapInputs();
             updateAiTemperature(DEFAULT_AI_TEMPERATURE, false);
             try {
                 const saved = localStorage.getItem(AI_TEMPERATURE_STORAGE_KEY);
@@ -1211,8 +1220,12 @@
             // Bind live input/change listeners on #apiKeyInput so #statusIndicator updates immediately
             const apiKeyInputEl = document.getElementById('apiKeyInput');
             if (apiKeyInputEl) {
-                apiKeyInputEl.addEventListener('input', updateApiKeyIndicator);
+                apiKeyInputEl.addEventListener('input', () => {
+                    saveBrowserValue(API_KEY_STORAGE_KEY, apiKeyInputEl.value.trim());
+                    updateApiKeyIndicator();
+                });
                 apiKeyInputEl.addEventListener('change', () => {
+                    saveBrowserValue(API_KEY_STORAGE_KEY, apiKeyInputEl.value.trim());
                     updateApiKeyIndicator();
                     loadAvailableModels();
                 });
@@ -1267,6 +1280,24 @@
                 isDraggingMap = false;
             });
         });
+
+        function saveBrowserValue(key, value) {
+            try {
+                if (value) localStorage.setItem(key, value);
+                else localStorage.removeItem(key);
+            } catch {
+                // Inputs remain usable if browser storage is blocked or full.
+            }
+        }
+
+        function restoreSavedMapInputs() {
+            try {
+                document.getElementById('apiKeyInput').value = localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+                document.getElementById('topicInput').value = localStorage.getItem(MAP_TOPIC_STORAGE_KEY) || '';
+            } catch {
+                // Use empty fields when browser storage is unavailable.
+            }
+        }
 
         // --- Reactive API Key & System Status Indicator ---
         function updateApiKeyIndicator() {
@@ -1674,6 +1705,7 @@
         // --- Build & Update Live CLI Command ---
         function updateCommandPreview() {
             const state = getFormState();
+            saveBrowserValue(MAP_TOPIC_STORAGE_KEY, document.getElementById('topicInput').value);
 
             // Match cli.py's signature: `cli.py make "<prompt>" -m ... -mp ... -gsm ... -eop ... --model ... --font ...`
             const escapedTopic = (state.topic || '').replace(/"/g, '\\"');
@@ -1725,7 +1757,7 @@
             ];
 
             container.innerHTML = badges.map(b => 
-                `<span class="text-[11px] font-mono px-2.5 py-0.5 rounded-lg border backdrop-blur-md ${b.color}">${b.label}</span>`
+                `<span class="text-[11px] font-mono px-2.5 py-0.5 rounded-lg border backdrop-blur-md ${b.color}">${escapeHtml(b.label)}</span>`
             ).join('');
         }
 
@@ -1775,7 +1807,7 @@
                 if (Array.isArray(data.fonts) && data.fonts.length > 0) {
                     const select = document.getElementById('fontSelect');
                     const previous = select.value;
-                    select.innerHTML = data.fonts.map(f => `<option value="${f}">${f}</option>`).join('');
+                    select.replaceChildren(...data.fonts.map(font => new Option(String(font), String(font))));
                     // Keep the previously selected font if it still exists.
                     if (data.fonts.includes(previous)) select.value = previous;
                     updateCommandPreview();
@@ -1974,8 +2006,12 @@
         }
 
         // --- Color Filling Studio (`filling_txt`, `filling_num`, & Smart Map Inspector) ---
+        function safePaletteHex(value, fallback = '#6366f1') {
+            return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+        }
+
         function hexToRgbArray(hex, alpha = 255) {
-            const clean = (hex || '#6366f1').replace('#', '');
+            const clean = safePaletteHex(hex).slice(1);
             const num = parseInt(clean, 16);
             const r = (num >> 16) & 255;
             const g = (num >> 8) & 255;
@@ -2084,8 +2120,8 @@
             }
             if (Array.isArray(analysis.ui_txt_rules)) {
                 fillingTxtRules = analysis.ui_txt_rules.map(r => ({
-                    key: r.key,
-                    hex: r.hex || '#6366f1',
+                    key: String(r.key ?? ''),
+                    hex: safePaletteHex(r.hex),
                     alpha: typeof r.alpha === 'number' ? r.alpha : 255
                 }));
             }
@@ -2093,7 +2129,7 @@
                 fillingNumRules = analysis.ui_num_rules.map(r => ({
                     low: Number(r.low) || 0,
                     high: Number(r.high) || 0,
-                    hex: r.hex || '#38bdf8',
+                    hex: safePaletteHex(r.hex, '#38bdf8'),
                     alpha: typeof r.alpha === 'number' ? r.alpha : 255
                 }));
             }
@@ -2109,14 +2145,14 @@
                 const st = analysis.stats || {};
                 const samples = Array.isArray(st.sample_values) ? st.sample_values.slice(0, 6).join(', ') : '';
                 const rangeBadge = (st.min_value !== null && st.min_value !== undefined)
-                    ? `<span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Range: ${st.min_value} .. ${st.max_value}</span>`
+                    ? `<span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Range: ${escapeHtml(st.min_value)} .. ${escapeHtml(st.max_value)}</span>`
                     : '';
                 statsBar.innerHTML = `
-                    <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">Type: ${analysis.detected_type || 'auto'}</span>
-                    <span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">Theme: ${analysis.resolved_theme || 'auto'}</span>
-                    <span class="px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-700">${st.total_regions || 0} regions (${st.unique_values || 0} unique)</span>
+                    <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">Type: ${escapeHtml(analysis.detected_type || 'auto')}</span>
+                    <span class="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">Theme: ${escapeHtml(analysis.resolved_theme || 'auto')}</span>
+                    <span class="px-2 py-0.5 rounded bg-slate-900 text-slate-300 border border-slate-700">${escapeHtml(st.total_regions || 0)} regions (${escapeHtml(st.unique_values || 0)} unique)</span>
                     ${rangeBadge}
-                    ${samples ? `<span class="text-slate-400 truncate max-w-full">On Map: <strong class="text-slate-200">${samples}</strong></span>` : ''}
+                    ${samples ? `<span class="text-slate-400 truncate max-w-full">On Map: <strong class="text-slate-200">${escapeHtml(samples)}</strong></span>` : ''}
                 `;
             }
 
@@ -2333,7 +2369,7 @@
                     <div class="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/90 border border-slate-800">
                         <input type="color" value="${item.hex}" onchange="updateTxtRule(${idx}, 'hex', this.value)"
                             class="w-7 h-7 rounded-lg cursor-pointer shrink-0" style="box-shadow: 0 0 12px ${item.hex}66">
-                        <input type="text" value="${item.key}" oninput="updateTxtRule(${idx}, 'key', this.value)"
+                        <input type="text" value="${escapeHtml(item.key)}" oninput="updateTxtRule(${idx}, 'key', this.value)"
                             placeholder="Label (e.g. yes)"
                             class="flex-1 min-w-0 px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
                         <span class="text-[10px] font-mono text-slate-400 hidden sm:inline">[${hexToRgbArray(item.hex, item.alpha).join(', ')}]</span>

@@ -1,14 +1,27 @@
 """Shared isolation: tests never use real credentials or external services."""
 import importlib.util
 import io
+import os
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 import requests
+from flask.testing import FlaskClient
 from rich.console import Console
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class AuthenticatedWebClient(FlaskClient):
+    """Existing API/UI tests exercise an explicitly signed-in browser."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        response = self.post('/login', data={
+            'login': os.environ.get('WEB_LOGIN', 'deltaaa'),
+            'password': os.environ.get('WEB_PASSWORD', 'deltaaa00!'),
+        })
+        assert response.status_code == 302
 
 
 @pytest.fixture(autouse=True)
@@ -43,15 +56,18 @@ def worker(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def web(monkeypatch):
+def web(monkeypatch, tmp_path):
     import dotenv
 
     # Ignore the developer's .env and avoid main.py changing the test cwd.
     monkeypatch.setattr(dotenv, 'dotenv_values', lambda *args, **kwargs: {})
     monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+    monkeypatch.setenv('SERVER', 'TRUE')
+    monkeypatch.setenv('WEB_AUTH_SECRET_FILE', str(tmp_path / 'session-secret'))
     monkeypatch.chdir(ROOT)
     spec = importlib.util.spec_from_file_location('web_app', ROOT / 'main.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.app.config.update(TESTING=True)
+    module.app.test_client_class = AuthenticatedWebClient
     return module

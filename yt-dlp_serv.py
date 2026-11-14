@@ -8,6 +8,7 @@ import tempfile
 import time
 import uuid
 from functools import lru_cache
+from urllib.parse import urlencode, urlsplit
 
 from flask import Flask, request, jsonify, send_file
 
@@ -35,6 +36,12 @@ _OG_TITLE_RE = re.compile(r'<meta\s+property="og:title"\s+content="([^"]+)"')
 _HTML_TITLE_RE = re.compile(r'<title>(.*?)</title>')
 _SAFE_TITLE_RE = re.compile(r'[^\w\-]')
 _AUDIO_TITLE_RE = re.compile(r'[\w\-]+')
+
+
+def _filename_stem(title):
+    """Leave room for suffixes within common 255-byte filesystem limits."""
+    safe = _SAFE_TITLE_RE.sub('_', title)
+    return safe.encode('utf-8')[:180].decode('utf-8', errors='ignore') or 'untitled'
 
 
 @lru_cache(maxsize=1)
@@ -112,9 +119,19 @@ def music_download():
         { "status": "error", "error": "<message>" }
     """
     data = request.get_json(silent=True) or {}
-    url = (data.get('url') or '').strip()
+    raw_url = data.get('url') or ''
+    if not isinstance(raw_url, str):
+        return jsonify(status='error', error='URL must be an HTTP or HTTPS address.'), 400
+    url = raw_url.strip()
     if not url:
         return jsonify({"status": "error", "error": "Missing 'url' in request body."}), 400
+    try:
+        parsed_url = urlsplit(url)
+        valid_url = parsed_url.scheme in ('http', 'https') and bool(parsed_url.hostname)
+    except ValueError:
+        valid_url = False
+    if not valid_url:
+        return jsonify(status='error', error='URL must be an HTTP or HTTPS address.'), 400
 
     # yt-dlp with `-x` writes to a temp file, so pipe through the temp dir and
     # read the produced .mp3 back. `-o -` is unreliable when extracting audio.
@@ -128,11 +145,12 @@ def music_download():
         "--audio-quality", "0",
         "--no-playlist",
         "-o", os.path.join(download_dir, "track.%(ext)s"),
+        "--",
         url,
     ]
 
     try:
-        subprocess.run(command, capture_output=True, check=True)
+        subprocess.run(command, capture_output=True, check=True, timeout=120)
 
         # Find the produced mp3 inside the temp dir.
         mp3_path = None
@@ -150,7 +168,7 @@ def music_download():
 
         import uuid
         title = _get_song_title(url) or str(uuid.uuid4())
-        title = re.sub(r'[^\w\-]', '_', title)
+        title = _filename_stem(title)
 
         with open(mp3_path, "rb") as fh:
             base64_audio = base64.b64encode(fh.read()).decode("utf-8")
@@ -165,8 +183,11 @@ def music_download():
             "title": title,
         }), 200
 
+    except subprocess.TimeoutExpired:
+        return jsonify(status='error', error='Audio download timed out. Please try again.'), 504
+
     except subprocess.CalledProcessError as e:
-        error_message = e.stderr.decode("utf-8", errors="ignore").strip()
+        error_message = (e.stderr or b'').decode("utf-8", errors="ignore").strip()
         return jsonify({"status": "error",
                         "error": f"yt-dlp ERROR: {error_message}"}), 500
 
@@ -1112,6 +1133,7 @@ def video_title_preview():
 @app.route('/api/render_video', methods=['POST'])
 @app.route('/api/render_video/', methods=['POST'])
 def make_video() -> tuple[object, int]:
+    cleanup_old_files()
     data: dict[str, object] = request.get_json(silent=True) or {}
 
     map_b64 = str(data.get('map_file') or '')
@@ -1151,7 +1173,7 @@ def make_video() -> tuple[object, int]:
         else:
             b64_part = value
         try:
-            raw = base64.b64decode(b64_part, validate=False)
+            raw = base64.b64decode(b64_part, validate=True)
         except Exception:
             raise ValueError(f"{label} is not valid base64.")
         if not raw:
@@ -1187,7 +1209,7 @@ def make_video() -> tuple[object, int]:
     except ValueError as ve:
         return jsonify({"status": "error", "error": str(ve)}), 400
 
-    safe_title = _SAFE_TITLE_RE.sub('_', title)
+    safe_title = _filename_stem(title)
     # The video headline and the selected song are independent identifiers.
     audio_title = data.get('audio_title', '')
     if not isinstance(audio_title, str) or (audio_title and not _AUDIO_TITLE_RE.fullmatch(audio_title)):
@@ -1443,7 +1465,7 @@ def make_video() -> tuple[object, int]:
         return jsonify({
             "status": "success",
             "file_path": output_path,
-            "download_url": f"/api/download_video?path={output_path}",
+            "download_url": "/api/download_video?" + urlencode({'path': output_path}),
             "has_audio": final_clip.audio is not None,
         }), 200
     
@@ -1482,7 +1504,10 @@ def download_video():
 
     # Normalise and enforce that the file lives under RENDER_DIR.
     # Resolve symlinks before checking containment in the render directory.
-    candidate = os.path.realpath(raw_path)
+    if '\0' in raw_path:
+        return jsonify(status='error', error='Invalid path.'), 400
+    candidate = os.path.realpath(raw_path if os.path.isabs(raw_path)
+                                 else os.path.join(RENDER_DIR, raw_path))
     render_root = os.path.realpath(RENDER_DIR)
     if os.path.commonpath([candidate, render_root]) != render_root:
         return jsonify({"status": "error", "error": "Invalid path."}), 400
@@ -1499,5 +1524,6 @@ def download_video():
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", "8080"))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    from server_runtime import run_app
+
+    run_app(app, default_port=8080)

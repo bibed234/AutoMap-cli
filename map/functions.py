@@ -206,6 +206,8 @@ def parse_ideas_content(content: str, filename: str = "") -> list[dict[str, obje
     headers = [str(h).strip().lower() for h in reader.fieldnames]
     if any(not h for h in headers):
         raise ValueError("CSV header contains an empty column name.")
+    if len(set(headers)) != len(headers):
+        raise ValueError("CSV header contains duplicate column names.")
 
     unknown_cols = [h for h in headers if h not in BATCH_CSV_ALL_COLUMNS]
     if unknown_cols:

@@ -26,6 +26,7 @@ from .constants import europe_coords, world_coords
 from .functions import ai_request, load_filling, _warning as showwarning, _error as showerror
 from . import log
 
+FONTS_DIR = Path(__file__).resolve().parent.parent / "resources" / "fonts"
 
 _AUTO_PALETTE: tuple[tuple[int, int, int, int], ...] = (
     (56, 189, 248, 255),   # #38bdf8 Sky
@@ -196,7 +197,7 @@ def _to_rgba_tuple(val: object) -> tuple[int, int, int, int] | None:
             r, g, b = int(val[0]), int(val[1]), int(val[2])
             a = int(val[3]) if len(val) == 4 else 255
             return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)), max(0, min(255, a)))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return None
     if isinstance(val, str) and val.strip().startswith("#"):
         return _hex_to_rgba(val, (99, 102, 241, 255))
@@ -224,7 +225,7 @@ def _parse_filling_overrides(
                 bounds = k if isinstance(k, tuple) else ast.literal_eval(str(k))
                 if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
                     num_out[(int(float(bounds[0])), int(float(bounds[1])))] = rgba
-            except (ValueError, SyntaxError, TypeError):
+            except (ValueError, SyntaxError, TypeError, OverflowError):
                 continue
     elif isinstance(raw_num, list):
         for item in raw_num:
@@ -235,7 +236,7 @@ def _parse_filling_overrides(
                 continue
             try:
                 num_out[(int(float(item["low"])), int(float(item["high"])))] = rgba
-            except (KeyError, ValueError, TypeError):
+            except (KeyError, ValueError, TypeError, OverflowError):
                 continue
     return txt_out, num_out
 
@@ -382,7 +383,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     def get_font(size):
         key = (font_name, size)
         if key not in _font_cache:
-            font_path = Path("resources/fonts") / font_name
+            font_path = FONTS_DIR / font_name
             _font_cache[key] = ImageFont.truetype(str(font_path), size)
         return _font_cache[key]
 
@@ -406,7 +407,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     try:
         raw_sw = ls.get("stroke_width", 15)
         label_stroke_width = max(0, min(40, int(15 if raw_sw is None else raw_sw)))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         label_stroke_width = 15
     label_auto_fit = bool(ls.get("auto_fit", False)) if "auto_fit" in ls else False
 

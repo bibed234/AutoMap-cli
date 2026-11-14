@@ -32,6 +32,17 @@ def test_explicit_theme_takes_precedence_over_topic():
     assert renderer._resolve_theme_name(' OCEANIC ', 'Christmas', 'number') == 'oceanic'
 
 
+@pytest.mark.parametrize('nonfinite', [float('inf'), float('-inf'), float('nan')])
+def test_nonfinite_color_channels_and_bounds_are_ignored(nonfinite):
+    assert renderer._to_rgba_tuple([nonfinite, 0, 0]) is None
+    assert renderer._parse_filling_overrides(None, [
+        {'low': nonfinite, 'high': 10, 'color': '#112233'},
+    ]) == ({}, {})
+    assert renderer._parse_filling_overrides(None, {
+        (0, nonfinite): '#112233',
+    }) == ({}, {})
+
+
 def test_color_overrides_accept_hex_rgb_and_rgba_and_ignore_invalid_rules():
     txt, num = renderer._parse_filling_overrides({
         ' Yes ': '#12Ab34', 'No': [300, -5, 25, 500], 'RGB': [1, 2, 3],

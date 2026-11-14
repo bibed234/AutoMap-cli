@@ -99,7 +99,7 @@ def test_generation_errors(web, monkeypatch, generation_request, failure, status
 
 
 PROXIES = [
-    ('/api/music_download', {'url': 'https://example.test/song'}, 40),
+    ('/api/music_download', {'url': 'https://example.test/song'}, 150),
     ('/api/music_cut', {'title': 'song', 'start_time': '00:01'}, 40),
     ('/api/render_video', {'map_file': 'map', 'background_video': 'bg', 'video_title': 'title'}, 300),
 ]
@@ -218,6 +218,15 @@ def test_codec_proxy_returns_worker_capabilities(web, monkeypatch):
     monkeypatch.setattr(requests, 'get', Mock(return_value=Mock(
         status_code=200, json=lambda: {'codecs': ['libx264']})))
     assert web.app.test_client().get('/api/codecs').json == {'codecs': ['libx264']}
+
+
+def test_worker_url_environment_override(monkeypatch, request):
+    monkeypatch.setenv('YTDLP_URL', 'http://127.0.0.1:9090/')
+    web = request.getfixturevalue('web')
+    get = Mock(return_value=Mock(status_code=200, json=lambda: {'codecs': []}))
+    monkeypatch.setattr(requests, 'get', get)
+    assert web.app.test_client().get('/api/codecs').status_code == 200
+    get.assert_called_once_with('http://127.0.0.1:9090/api/codecs', timeout=20)
 
 
 @pytest.mark.parametrize('failure', [requests.Timeout(), ValueError('bad JSON')])

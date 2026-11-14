@@ -8,6 +8,12 @@ from main import app
 from map.functions import load_ideas_from_file, parse_ideas_content
 
 
+@pytest.fixture(autouse=True)
+def authenticated_batch_client(monkeypatch):
+    from conftest import AuthenticatedWebClient
+    monkeypatch.setattr(app, 'test_client_class', AuthenticatedWebClient)
+
+
 def test_parse_ideas_rejects_non_csv_extensions(tmp_path: Path):
     for ext in (".txt", ".md", ".json", ".yaml"):
         with pytest.raises(ValueError, match="Only .csv files"):

@@ -65,6 +65,7 @@ key = (os.environ.get("GEMINI_API_KEY") or "").strip()
 if not key and env.is_file():
     key = (dotenv_values(env).get("GEMINI_API_KEY") or "").strip()
 needs_api_key = not key or key.startswith("your_")
+WORKER_URL = (os.environ.get("YTDLP_URL") or "http://yt-dlp-worker:8080").rstrip('/')
 
 
 def _available_fonts():
@@ -83,6 +84,27 @@ def _available_fonts():
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
+
+from web_auth import init_web_auth
+
+init_web_auth(app, dotenv_values(env) if env.is_file() else {})
+
+
+@app.before_request
+def validate_api_json_body():
+    """Reject malformed or non-object JSON before endpoint field access."""
+    if request.path.startswith('/api/') and request.is_json:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(status='error', error='Request body must be a valid JSON object.'), 400
+        for name in ('api_key', 'url'):
+            if data.get(name) is not None and not isinstance(data[name], str):
+                return jsonify(status='error', error=f'{name} must be a string.'), 400
+
+
+@app.errorhandler(413)
+def request_too_large(error):
+    return jsonify(status='error', error='Upload exceeds the 32 MiB request limit.'), 413
 
 @app.route('/')
 def main():
@@ -120,7 +142,7 @@ def video_title_preview():
     try:
         # Preview and final rendering share the worker's title styling options.
         response = requests.post(
-            'http://yt-dlp-worker:8080/api/video_title_preview',
+            f'{WORKER_URL}/api/video_title_preview',
             json={key: data[key] for key in allowed_keys if key in data},
             timeout=15,
         )
@@ -148,7 +170,7 @@ def api_codecs():
     import requests
 
     try:
-        response = requests.get('http://yt-dlp-worker:8080/api/codecs', timeout=20)
+        response = requests.get(f'{WORKER_URL}/api/codecs', timeout=20)
         return jsonify(response.json()), response.status_code
     except (requests.RequestException, ValueError):
         return jsonify(error='Could not check render worker codecs. Use libx264 (CPU).'), 502
@@ -388,7 +410,7 @@ def _parse_render_params(data: dict[str, object]) -> tuple[str, str | None, int]
 
     try:
         gsm = int(data.get("gsm", 15))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         gsm = 15
 
     return str(font_name), extra_option, gsm
@@ -851,9 +873,9 @@ def music_download():
     # Another service downloads music from YouTube and converts it to mp3.
     try:
         response = requests.post(
-            "http://yt-dlp-worker:8080/api/music_download/",
+            f"{WORKER_URL}/api/music_download/",
             json={"url": url},
-            timeout=40,
+            timeout=150,
         )
     except requests.RequestException as e:
         return jsonify({"status": "error",
@@ -899,7 +921,7 @@ def cut_audio() -> tuple[object, int]:
     # The worker owns the downloaded track and performs the cut in its storage.
     try:
         response = requests.post(
-            "http://yt-dlp-worker:8080/api/music_cut/",
+            f"{WORKER_URL}/api/music_cut/",
             json={
                 "start_time": start_time,
                 "title": title,
@@ -954,7 +976,7 @@ def make_video() -> tuple[object, int]:
 
     try:
         response = requests.post(
-            "http://yt-dlp-worker:8080/api/render_video/",
+            f"{WORKER_URL}/api/render_video/",
             json={
                 "map_file": map_b64,
                 "background_video": background_b64,
@@ -1022,7 +1044,7 @@ def download_video():
 
     try:
         upstream = requests.get(
-            "http://yt-dlp-worker:8080/api/download_video",
+            f"{WORKER_URL}/api/download_video",
             params={"path": raw_path},
             stream=True,
             timeout=120,
@@ -1033,13 +1055,16 @@ def download_video():
 
     # If the worker did not return a file (e.g. 404/400 JSON error), pass it through.
     if upstream.status_code != 200:
-        content_type = upstream.headers.get("Content-Type", "")
-        if "application/json" in content_type:
-            try:
-                return jsonify(upstream.json()), upstream.status_code
-            except ValueError:
-                pass
-        return (upstream.text or "Download failed"), upstream.status_code
+        try:
+            content_type = upstream.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                try:
+                    return jsonify(upstream.json()), upstream.status_code
+                except ValueError:
+                    pass
+            return (upstream.text or "Download failed"), upstream.status_code
+        finally:
+            upstream.close()
 
     disposition = upstream.headers.get(
         "Content-Disposition",
@@ -1048,17 +1073,23 @@ def download_video():
 
     def _generate():
         # Stream in chunks so large videos don't load fully into memory.
-        for chunk in upstream.iter_content(chunk_size=64 * 1024):
-            if chunk:
-                yield chunk
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
 
-    return Response(
+    response = Response(
         _generate(),
         mimetype="video/mp4",
         headers={"Content-Disposition": disposition},
     )
+    response.call_on_close(upstream.close)
+    return response
 
 
 if __name__ == "__main__":
+    from server_runtime import run_app
 
-    app.run(host='0.0.0.0', debug=True)
+    run_app(app)

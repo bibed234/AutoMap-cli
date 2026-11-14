@@ -1,4 +1,5 @@
 import importlib
+import io
 from unittest.mock import Mock
 
 import pytest
@@ -58,6 +59,19 @@ def test_failed_generation_returns_error(generate):
     result = CliRunner().invoke(cli.main, ['make', 'topic'])
     assert result.exit_code == 1
     assert 'Map generation failed' in result.output
+
+
+def test_batch_honors_csv_palette_and_output_directory(generate, tmp_path):
+    generate.return_value = io.BytesIO(b'png-content')
+    ideas = tmp_path / 'ideas.csv'
+    ideas.write_text('prompt,palette_theme,output\nPopulation,greens,../selected.png\n')
+    output = tmp_path / 'maps'
+    result = CliRunner().invoke(cli.main, ['batch', str(ideas), '-o', str(output)])
+    assert result.exit_code == 0, result.output
+    assert generate.call_args.kwargs['palette_theme'] == 'greens'
+    assert generate.call_args.kwargs['auto_style'] is True
+    assert (output / 'selected.png').read_bytes() == b'png-content'
+    assert not (tmp_path / 'selected.png').exists()
 
 
 @pytest.mark.parametrize('value', ['0', '0.4', '2'])

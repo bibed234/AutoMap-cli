@@ -158,6 +158,11 @@ def test_font_objects_are_cached_within_render(scene, monkeypatch):
     assert load_font.call_count == 1
 
 
+def test_font_loading_is_independent_of_working_directory(scene, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    assert isinstance(render(), io.BytesIO)
+
+
 def test_auto_fill_from_ai_detects_numbers_and_words():
     txt_rules, num_rules = renderer._auto_fill_from_ai(
         {'ukraine': 38, 'poland': 37, 'germany': 84, 'estonia': 1},

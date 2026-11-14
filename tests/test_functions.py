@@ -1,10 +1,17 @@
 """Regression fixture for the original saved AI response."""
 import json
+import pytest
 from pathlib import Path
 
-from map.functions import ai_request
+from map.functions import ai_request, parse_ideas_content
 
 TEST_DIR = Path(__file__).resolve().parent
+
+
+@pytest.mark.parametrize('headers', ['prompt,prompt', 'prompt, Prompt ', 'prompt,mode,MODE'])
+def test_csv_duplicate_headers_are_rejected(headers):
+    with pytest.raises(ValueError, match='duplicate column'):
+        parse_ideas_content(headers + '\nPopulation,text,number\n', 'ideas.csv')
 
 
 def test_saved_ai_response():
