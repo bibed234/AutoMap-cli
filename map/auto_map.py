@@ -717,9 +717,20 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
 
     # merging layers
     elif map_type == 'world':
+        log.info("Adding world relief + borders overlay")
+        relief = Image.open(Path(__file__).parent.parent / "./resources/maps/world_map_relief.png").convert("RGBA")
+        if relief.size != img.size:
+            relief = relief.resize(img.size)
+
+        # Reduce relief opacity to preserve the generated region colors beneath it.
+        _, _, _, a = relief.split()
+        relief.putalpha(a.point(_RELIEF_ALPHA_LUT))
+
+        result = Image.alpha_composite(img, relief)
+
         borders = Image.open(Path(__file__).parent.parent / "./resources/maps/world_map_blured.png").convert("RGBA")
 
-        result = Image.alpha_composite(img, borders)
+        result = Image.alpha_composite(result, borders)
         result = Image.alpha_composite(result, text_layer)
     else:
         result = Image.alpha_composite(img, text_layer)

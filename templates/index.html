@@ -357,21 +357,26 @@
                             </div>
                         </div>
 
-                        <!-- Batch Generation: Ideas from File -->
+                        <!-- Batch Generation: Ideas from CSV -->
                         <div class="mt-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-2">
                             <div class="flex items-center justify-between gap-2">
                                 <span class="text-[11px] font-medium text-slate-300 flex items-center gap-1.5">
-                                    <i class="fa-solid fa-file-lines text-emerald-400 text-[11px]"></i>
-                                    Ideas from File (.txt, .csv, .json)
+                                    <i class="fa-solid fa-file-csv text-emerald-400 text-[11px]"></i>
+                                    Ideas from CSV (.csv)
                                 </span>
-                                <span id="ideasFileBadge" class="text-[10px] font-mono text-slate-500 truncate max-w-[140px]">No file</span>
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <a href="/api/batch-template" download="batch_template.csv" id="downloadBatchTemplateLink"
+                                        class="text-[10px] font-medium text-indigo-400 hover:text-indigo-300 underline shrink-0"
+                                        title="Download CSV template">Template</a>
+                                    <span id="ideasFileBadge" class="text-[10px] font-mono text-slate-500 truncate max-w-[110px]">No file</span>
+                                </div>
                             </div>
                             <div class="flex items-center gap-2">
                                 <label for="ideasFileInput" class="flex-1 cursor-pointer px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-[11px] font-medium text-slate-300 hover:text-white transition text-center truncate">
                                     <i class="fa-solid fa-upload mr-1 text-indigo-400"></i>
-                                    Choose Ideas File
+                                    Choose CSV File
                                 </label>
-                                <input type="file" id="ideasFileInput" accept=".txt,.md,.csv,.json" class="hidden" onchange="handleIdeasFileSelected(event)">
+                                <input type="file" id="ideasFileInput" accept=".csv" class="hidden" onchange="handleIdeasFileSelected(event)">
                                 <button type="button" id="generateBatchBtn" onclick="generateMapsFromFile()" disabled
                                     class="px-3 py-1.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-semibold text-white transition flex items-center gap-1.5">
                                     <i class="fa-solid fa-layer-group text-[10px]"></i>
@@ -555,6 +560,10 @@
                                 <div class="relative flex-1 min-w-0">
                                     <select id="modelSelect" onchange="updateCommandPreview()" 
                                         class="w-full appearance-none px-3 py-2.5 bg-slate-950/90 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-indigo-500 transition pr-7 truncate">
+                                        <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                        <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+                                        <option value="gemma-3-27b-it">gemma-3-27b-it</option>
+                                        <option value="gemma-3-12b-it">gemma-3-12b-it</option>
                                         <option value="gemini-2.5-flash">gemini-2.5-flash</option>
                                         <option value="gemini-2.5-pro">gemini-2.5-pro</option>
                                         <option value="gemini-2.0-flash">gemini-2.0-flash</option>
@@ -1197,12 +1206,16 @@
             renderFillingStudio();
             // Discover real fonts from the backend on startup (silent — no toast)
             fetchFontsFromServer(true);
+            loadAvailableModels();
 
             // Bind live input/change listeners on #apiKeyInput so #statusIndicator updates immediately
             const apiKeyInputEl = document.getElementById('apiKeyInput');
             if (apiKeyInputEl) {
                 apiKeyInputEl.addEventListener('input', updateApiKeyIndicator);
-                apiKeyInputEl.addEventListener('change', updateApiKeyIndicator);
+                apiKeyInputEl.addEventListener('change', () => {
+                    updateApiKeyIndicator();
+                    loadAvailableModels();
+                });
             }
 
             // Ask the server whether an API key from .env is available.
@@ -1360,31 +1373,89 @@
         let loadedIdeasFile = { filename: '', text: '' };
         let lastBatchResults = [];
 
+        async function loadAvailableModels() {
+            const select = document.getElementById('modelSelect');
+            if (!select) return;
+            const apiKey = (document.getElementById('apiKeyInput')?.value || '').trim();
+            try {
+                const res = await fetch('/api/models', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(apiKey ? { api_key: apiKey } : {})
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'success' || !Array.isArray(data.models) || data.models.length === 0) {
+                    return;
+                }
+                const prev = select.value;
+                select.replaceChildren();
+                data.models.forEach(modelId => {
+                    const opt = document.createElement('option');
+                    opt.value = modelId;
+                    opt.textContent = modelId;
+                    select.appendChild(opt);
+                });
+                if (data.models.includes(prev)) {
+                    select.value = prev;
+                } else {
+                    const preferred = data.models.find(m => m.includes('flash')) || data.models[0];
+                    select.value = preferred;
+                }
+                updateCommandPreview();
+            } catch (_) {
+                // Keep static fallback options if /api/models is unreachable
+            }
+        }
+
+        async function syncLatestMapToStudioStorage(imageUrl) {
+            if (!imageUrl || typeof StudioStorage === 'undefined' || !StudioStorage.setAsset) return;
+            try {
+                const blob = await (await fetch(imageUrl)).blob();
+                await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', { type: 'image/png' }));
+            } catch (_) {
+                // Ignore storage quota or fetch errors during preview sync
+            }
+        }
+
         function renderBatchResultsPanel(results) {
             lastBatchResults = Array.isArray(results) ? results : [];
             const panel = document.getElementById('batchResultsPanel');
             const summary = document.getElementById('batchResultsSummary');
             const list = document.getElementById('batchResultsList');
             if (!panel || !list) return;
+            list.replaceChildren();
             if (lastBatchResults.length === 0) {
                 panel.classList.add('hidden');
-                list.innerHTML = '';
                 return;
             }
             panel.classList.remove('hidden');
             if (summary) {
                 summary.textContent = `${lastBatchResults.length} map${lastBatchResults.length === 1 ? '' : 's'} ready`;
             }
-            list.innerHTML = lastBatchResults.map((item, idx) => `
-                <div class="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-900/90 border border-slate-800 hover:border-indigo-500/50 transition">
-                    <button type="button" onclick="selectBatchResult(${idx})" class="flex-1 text-left text-[11px] font-mono text-slate-200 hover:text-indigo-300 truncate" title="${item.prompt.replace(/"/g, '&quot;')}">
-                        ${item.index}. ${item.prompt}
-                    </button>
-                    <button type="button" onclick="downloadBatchResult(${idx})" title="Download ${item.filename}" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-emerald-600/30 text-slate-300 hover:text-emerald-300 transition">
-                        <i class="fa-solid fa-download"></i>
-                    </button>
-                </div>
-            `).join('');
+            lastBatchResults.forEach((item, idx) => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-slate-900/90 border border-slate-800 hover:border-indigo-500/50 transition';
+
+                const selectBtn = document.createElement('button');
+                selectBtn.type = 'button';
+                selectBtn.className = 'flex-1 text-left text-[11px] font-mono text-slate-200 hover:text-indigo-300 truncate';
+                selectBtn.title = String(item.prompt || '');
+                selectBtn.textContent = `${item.index}. ${item.prompt || ''}`;
+                selectBtn.addEventListener('click', () => selectBatchResult(idx));
+
+                const dlBtn = document.createElement('button');
+                dlBtn.type = 'button';
+                dlBtn.title = `Download ${item.filename || `map_${idx + 1}.png`}`;
+                dlBtn.className = 'text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-emerald-600/30 text-slate-300 hover:text-emerald-300 transition';
+                const icon = document.createElement('i');
+                icon.className = 'fa-solid fa-download';
+                dlBtn.appendChild(icon);
+                dlBtn.addEventListener('click', () => downloadBatchResult(idx));
+
+                row.appendChild(selectBtn);
+                row.appendChild(dlBtn);
+                list.appendChild(row);
+            });
         }
 
         function selectBatchResult(idx) {
@@ -1400,6 +1471,7 @@
             if (item.analysis) {
                 applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
             }
+            syncLatestMapToStudioStorage(item.image_url);
             showToast(`Viewing #${item.index}: ${item.prompt}`, 'info');
         }
 
@@ -1446,7 +1518,7 @@
 
         async function generateMapsFromFile() {
             if (!loadedIdeasFile.text.trim()) {
-                showToast('Choose an ideas file first (.txt, .csv, or .json)', 'warn');
+                showToast('Choose a .csv ideas file first', 'warn');
                 return;
             }
             const state = getFormState();
@@ -1474,7 +1546,18 @@
                 const okItems = (data.results || []).filter(r => r.status === 'success' && r.image_url);
                 okItems.forEach(item => {
                     addToHistory(
-                        { ...state, topic: item.prompt },
+                        {
+                            ...state,
+                            topic: item.prompt,
+                            mode: item.mode || state.mode,
+                            map_type: item.map_type || state.map_type,
+                            gsm: item.gsm ?? state.gsm,
+                            extra_option: item.extra_option || state.extra_option,
+                            model: item.model || state.model,
+                            font: item.font || state.font,
+                            palette_theme: item.palette_theme || state.palette_theme,
+                            temperature: item.temperature ?? state.temperature,
+                        },
                         `[batch] ${item.filename}`,
                         {
                             image_url: item.image_url,
@@ -2475,6 +2558,7 @@
                 if (item.analysis) {
                     applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
                 }
+                syncLatestMapToStudioStorage(item.image_url);
             }
 
             updateCommandPreview();

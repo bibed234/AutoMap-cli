@@ -192,7 +192,7 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
               default=None,
               help="Gemini API key for this run (overrides GEMINI_API_KEY env var).")
 def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, model, font_name, verbose, api_key):
-    """Generate multiple maps from ideas listed in IDEAS_FILE (.txt, .csv, or .json)."""
+    """Generate multiple maps from ideas listed in a .csv IDEAS_FILE."""
     from map import log
     from map.auto_map import auto_map
     from map.functions import load_ideas_from_file, slugify_prompt

@@ -494,10 +494,55 @@ def generate():
     return jsonify(resp_payload)
 
 
+@app.route('/api/models', methods=['GET', 'POST'])
+def list_available_models():
+    """Return Gemini/Gemma models available for the active API key."""
+    data = request.get_json(silent=True) or {}
+    req_key = str(data.get("api_key") or request.args.get("api_key") or "").strip()
+    env_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    key = req_key or env_key
+    if not key:
+        return jsonify({"status": "error", "error": "API key required.", "models": []}), 400
+    try:
+        from google import genai
+        client = genai.Client(api_key=key)
+        models: list[str] = []
+        for m in client.models.list():
+            name = getattr(m, "name", "") or ""
+            if name.startswith("models/"):
+                name = name[len("models/"):]
+            actions = getattr(m, "supported_actions", None) or []
+            if actions and "generateContent" not in actions:
+                continue
+            low = name.lower()
+            if not (low.startswith("gemini") or low.startswith("gemma")):
+                continue
+            if any(skip in low for skip in ("embedding", "imagen", "veo", "tts", "aqa", "robotics", "computer-use")):
+                continue
+            models.append(name)
+        return jsonify({"status": "success", "models": sorted(set(models), reverse=True)})
+    except Exception as err:  # noqa: BLE001
+        return jsonify({"status": "error", "error": str(err), "models": []}), 500
+
+
+@app.route('/api/batch-template', methods=['GET'])
+def download_batch_template():
+    """Serve the downloadable batch CSV template."""
+    template_path = Path(__file__).resolve().parent / "batch_template.csv"
+    if not template_path.is_file():
+        return jsonify({"status": "error", "error": "batch_template.csv not found."}), 404
+    return send_file(
+        template_path,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="batch_template.csv",
+    )
+
+
 @app.route('/api/generate_batch/', methods=['POST'])
 @app.route('/api/generate_batch', methods=['POST'])
 def generate_batch():
-    """Generate multiple maps from an uploaded ideas file (.txt, .csv, .json)."""
+    """Generate multiple maps from an uploaded .csv ideas file."""
     if request.files and "file" in request.files:
         uploaded = request.files["file"]
         filename = uploaded.filename or ""
@@ -528,6 +573,13 @@ def generate_batch():
     default_map_type = str(data.get("map_type") or "default").lower()
     default_model = str(data.get("model") or "gemini-2.5-flash")
     available_fonts = set(_available_fonts())
+
+    temperature_options: dict[str, object] = {}
+    if "temperature" in data and str(data["temperature"]).strip() != "":
+        try:
+            temperature_options["temperature"] = validate_temperature(data["temperature"])
+        except ValueError as err:
+            return jsonify({"status": "error", "error": str(err)}), 400
 
     base_style_kwargs: dict[str, object] = {}
     for style_key, kw_name in (
@@ -576,6 +628,7 @@ def generate_batch():
                 show_result=False,
                 io_res=True,
                 api_key=api_key,
+                **temperature_options,
                 **item_style_kwargs,
             )
         except Exception as err:  # noqa: BLE001
@@ -605,7 +658,16 @@ def generate_batch():
             "filename": out_filename,
             "status": "success",
             "image_url": f"data:image/png;base64,{encoded}",
+            "mode": item_mode,
+            "map_type": item_map_type,
+            "gsm": item_gsm,
+            "extra_option": item_eop or "none",
+            "model": item_model,
+            "font": item_font,
+            "palette_theme": item_style_kwargs.get("palette_theme", "auto"),
         }
+        if temperature_options:
+            item_payload["temperature"] = temperature_options["temperature"]
         render_meta = getattr(buffer, "map_meta", None)
         ai_vals = render_meta.get("ai_answer") if isinstance(render_meta, dict) else None
         if isinstance(ai_vals, dict) and ai_vals:
