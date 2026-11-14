@@ -160,8 +160,8 @@ _WORLD_LABEL_SIZES: dict[str, int] = {
     "africa": 100,
     "europe": 110,
     "australia": 50,
-    "south_America": 100,
-    "north_America": 120,
+    "south_america": 100,
+    "north_america": 120,
 }
 
 
@@ -534,11 +534,19 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     used_txt_rules: dict[str, tuple[int, int, int, int]] = {}
     used_num_rules: dict[tuple[int, int], tuple[int, int, int, int]] = {}
 
+    ai_answer_norm = {
+        str(k).strip().lower().replace(" ", "_").replace("-", "_"): v
+        for k, v in (ai_answer or {}).items()
+    }
+    if "oceania" in ai_answer_norm and "australia" not in ai_answer_norm:
+        ai_answer_norm["australia"] = ai_answer_norm["oceania"]
+
     for index, (name, points) in enumerate(dict_.items(), start=1):
+        name_key = str(name).strip().lower().replace(" ", "_").replace("-", "_")
         '''Number mode'''
         if mode == 'number':
             try:
-                info = ai_answer[name]
+                info = ai_answer_norm[name_key]
                 color = (random.randint(80, 255), random.randint(80, 255), random.randint(80, 255), 255)
                 parsed_value = _parse_short_number(info)
                 num_value = int(round(parsed_value)) if parsed_value is not None else None
@@ -570,7 +578,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
 
         elif mode == 'text':
             '''Text mode'''
-            raw_info = ai_answer.get(name)
+            raw_info = ai_answer_norm.get(name_key)
             info = "" if raw_info is None else str(raw_info).strip()
             if not info:
                 log.info(f"No information for {name}, skipping")
@@ -602,7 +610,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
         if map_type == 'default' or map_type == 'world':
             for coord in points:
                 # Tolerances are tuned to the shading in the source map images.
-                if name == "south_America":
+                if name == "south_america":
                     thresh = 15
                 elif name == "asia":
                     thresh = 20

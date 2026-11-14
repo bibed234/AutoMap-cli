@@ -82,6 +82,7 @@ def _available_fonts():
 
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 
 @app.route('/')
 def main():
@@ -494,11 +495,11 @@ def generate():
     return jsonify(resp_payload)
 
 
-@app.route('/api/models', methods=['GET', 'POST'])
+@app.route('/api/models', methods=['POST'])
 def list_available_models():
     """Return Gemini/Gemma models available for the active API key."""
     data = request.get_json(silent=True) or {}
-    req_key = str(data.get("api_key") or request.args.get("api_key") or "").strip()
+    req_key = str(data.get("api_key") or "").strip()
     env_key = (os.getenv("GEMINI_API_KEY") or "").strip()
     key = req_key or env_key
     if not key:
@@ -1060,4 +1061,4 @@ def download_video():
 
 if __name__ == "__main__":
 
-    app.run(host='0.0.0.0',debug=True)
+    app.run(host='0.0.0.0', debug=os.getenv("FLASK_DEBUG", "0") == "1")
