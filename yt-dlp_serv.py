@@ -44,6 +44,89 @@ def _filename_stem(title):
     return safe.encode('utf-8')[:180].decode('utf-8', errors='ignore') or 'untitled'
 
 
+def _decode_audio_payload(value):
+    """Decode browser audio without allocating an unbounded decoded buffer."""
+    if not isinstance(value, str) or not value:
+        raise ValueError('Audio file is required.')
+    if value.startswith('data:'):
+        header, separator, value = value.partition(',')
+        if not separator or not header.endswith(';base64'):
+            raise ValueError('Audio file must be base64 encoded.')
+    if len(value) > 4 * ((MAX_MATERIAL_BYTES + 2) // 3):
+        raise ValueError('Audio file exceeds the 10 MB limit.')
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (ValueError, TypeError):
+        raise ValueError('Audio file is not valid base64.') from None
+    if not raw:
+        raise ValueError('Audio file is empty.')
+    if len(raw) > MAX_MATERIAL_BYTES:
+        raise ValueError('Audio file exceeds the 10 MB limit.')
+    return raw
+
+
+def _convert_uploaded_audio(raw, start=None, duration=None):
+    """Verify audio and normalize it with the same FFmpeg binary as video rendering."""
+    from moviepy.config import FFMPEG_BINARY
+
+    with tempfile.TemporaryDirectory(prefix='automap_audio_') as folder:
+        source = os.path.join(folder, 'source')
+        output = os.path.join(folder, 'normalized.mp3')
+        with open(source, 'wb') as stream:
+            stream.write(raw)
+        command = [FFMPEG_BINARY, '-hide_banner', '-loglevel', 'error', '-nostdin',
+                   '-protocol_whitelist', 'file,pipe']
+        if start is not None:
+            command += ['-ss', str(start)]
+        command += ['-i', source, '-map', '0:a:0', '-vn']
+        if duration is not None:
+            command += ['-t', str(duration)]
+        command += ['-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '192k',
+                    '-write_xing', '0', '-id3v2_version', '0',
+                    '-fs', str(MAX_MATERIAL_BYTES + 1), output]
+        result = subprocess.run(command, capture_output=True, timeout=30, check=False)
+        if result.returncode != 0 or not os.path.isfile(output):
+            raise ValueError('Audio file could not be decoded. Choose a valid audio file.')
+        with open(output, 'rb') as stream:
+            normalized = stream.read(MAX_MATERIAL_BYTES + 1)
+        if not normalized:
+            raise ValueError('Audio contains no playable samples at the selected start time.')
+        if len(normalized) > MAX_MATERIAL_BYTES:
+            raise ValueError('Converted audio exceeds the 10 MB limit. Choose a shorter track.')
+        return normalized
+
+
+@app.route('/api/music_upload', methods=['POST'])
+@app.route('/api/music_upload/', methods=['POST'])
+def music_upload():
+    """Normalize uploaded audio and return the same contract as music_download."""
+    cleanup_old_files()
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(status='error', error='Expected an audio upload object.'), 400
+    filename = data.get('filename') or 'uploaded_audio'
+    if not isinstance(filename, str):
+        return jsonify(status='error', error='Invalid audio filename.'), 400
+    try:
+        raw = _decode_audio_payload(data.get('audio_file'))
+        normalized = _convert_uploaded_audio(raw)
+    except ValueError as error:
+        return jsonify(status='error', error=str(error)), 400
+    except subprocess.TimeoutExpired:
+        return jsonify(status='error', error='Audio conversion timed out. Choose a shorter track.'), 504
+    except OSError:
+        return jsonify(status='error', error='Audio conversion is unavailable.'), 503
+    original = os.path.splitext(os.path.basename(filename.replace('\\', '/')))[0]
+    title = f'{_filename_stem(original)}_{uuid.uuid4().hex[:12]}'
+    try:
+        os.makedirs(DOWNLOADS, exist_ok=True)
+        with open(os.path.join(DOWNLOADS, f'{title}.mp3'), 'xb') as stream:
+            stream.write(normalized)
+    except OSError:
+        return jsonify(status='error', error='Audio storage is unavailable. Please try again.'), 503
+    return jsonify(status='success', file=base64.b64encode(normalized).decode('ascii'), title=title)
+
+
 @lru_cache(maxsize=1)
 def _available_codecs():
     """Probe the encoder and device together, using the same FFmpeg as MoviePy."""
@@ -224,7 +307,8 @@ def cut_audio() -> tuple[object, int]:
     try:
         time = str(data['start_time'])
         filename = data['title']
-        if not isinstance(filename, str) or not re.fullmatch(r'[\w\-]+', filename):
+        if (not isinstance(filename, str) or not re.fullmatch(r'[\w\-]+', filename)
+                or len(filename.encode('utf-8')) > 220):
             return jsonify({"status": "error", "error": "Invalid track title."}), 400
 
         raw_duration = data.get('duration', 8)
@@ -246,6 +330,20 @@ def cut_audio() -> tuple[object, int]:
 
         # Audio clip duration (1..30 seconds, default 8 seconds)
         end_ms = start_ms + (duration * 1000)
+
+        if data.get('audio_file') is not None:
+            try:
+                raw = _decode_audio_payload(data['audio_file'])
+                normalized = _convert_uploaded_audio(raw, start=start_ms / 1000, duration=duration)
+            except ValueError as error:
+                return jsonify(status='error', error=str(error)), 400
+            except subprocess.TimeoutExpired:
+                return jsonify(status='error', error='Audio conversion timed out.'), 504
+            except OSError:
+                return jsonify(status='error', error='Audio conversion is unavailable.'), 503
+            with open(os.path.join(CUT_DIR, f'{filename}_cut.mp3'), 'wb') as stream:
+                stream.write(normalized)
+            return jsonify(status='successfull', file=base64.b64encode(normalized).decode('ascii')), 200
 
         from pydub import AudioSegment
 

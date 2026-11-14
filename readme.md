@@ -107,6 +107,8 @@ With `SERVER=TRUE`, sign in with `deltaaa` / `deltaaa00!`, or set `WEB_LOGIN` an
 
 The entered Google API key, last map topic, and palette are remembered in the same browser. Browser storage must remain enabled to keep these preferences between visits.
 
+In Video Studio, use **Or upload your own music** to select an MP3, WAV, M4A, AAC, OGG or FLAC file up to 10 MB. The track is converted to MP3 and can be previewed, cut or used directly in the rendered video. The source track and selected cut are saved in this browser so they remain available after reopening the studio.
+
 ### Running on a server
 
 Install the updated dependencies and set `SERVER=TRUE` in the environment or `.env`, then run `python main.py`. This starts the production Waitress server with debugging disabled. Without `SERVER=TRUE`, the Flask development server runs with debugging enabled. `PORT` defaults to `5000` for the web service and `8080` for the media worker.

@@ -83,7 +83,8 @@ def _available_fonts():
 
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
+# Three 10 MiB materials (map, background and music) grow by 4/3 in JSON.
+app.config["MAX_CONTENT_LENGTH"] = 48 * 1024 * 1024
 
 from web_auth import init_web_auth
 
@@ -104,7 +105,7 @@ def validate_api_json_body():
 
 @app.errorhandler(413)
 def request_too_large(error):
-    return jsonify(status='error', error='Upload exceeds the 32 MiB request limit.'), 413
+    return jsonify(status='error', error='Upload exceeds the total request size limit.'), 413
 
 @app.route('/')
 def main():
@@ -890,6 +891,25 @@ def music_download():
     # Pass the downstream payload/status straight through.
     return jsonify(payload), response.status_code
 
+@app.post('/api/music_upload')
+def music_upload():
+    """Normalize a user-uploaded audio file through the media worker."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data.get('audio_file'), str) or not data['audio_file'].strip():
+        return jsonify(status='error', error='Choose an audio file to upload.'), 400
+    try:
+        response = requests.post(
+            f'{WORKER_URL}/api/music_upload',
+            json={'audio_file': data['audio_file'], 'filename': str(data.get('filename') or 'uploaded-audio')},
+            timeout=90,
+        )
+        return jsonify(response.json()), response.status_code
+    except requests.RequestException:
+        return jsonify(status='error', error='Audio upload service is unavailable. Please try again.'), 502
+    except ValueError:
+        return jsonify(status='error', error='Audio upload service returned an invalid response.'), 502
+
+
 @app.route('/api/music_cut', methods=['POST'])
 @app.route('/api/music_cut/', methods=['POST'])
 def cut_audio() -> tuple[object, int]:
@@ -917,16 +937,15 @@ def cut_audio() -> tuple[object, int]:
         duration = 8
     # Keep audio cuts within the supported 1–30 second range before forwarding.
     duration = max(1, min(30, duration))
+    payload = {'start_time': start_time, 'title': title, 'duration': duration}
+    if data.get('audio_file'):
+        payload['audio_file'] = data['audio_file']
 
     # The worker owns the downloaded track and performs the cut in its storage.
     try:
         response = requests.post(
             f"{WORKER_URL}/api/music_cut/",
-            json={
-                "start_time": start_time,
-                "title": title,
-                "duration": duration,
-            },
+            json=payload,
             timeout=40,
         )
 
