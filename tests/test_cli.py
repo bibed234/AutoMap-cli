@@ -118,3 +118,14 @@ def test_font_discovery(module_name, web, tmp_path, monkeypatch):
     assert module._available_fonts() == ['A.OTF', 'z.ttf']
     monkeypatch.setattr(module, 'FONTS_DIR', tmp_path / 'missing')
     assert module._available_fonts() == []
+
+
+def test_deepseek_cli_key_does_not_replace_gemini_key(generate, monkeypatch):
+    import os
+    monkeypatch.setenv('GEMINI_API_KEY', 'keep-gemini')
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'previous-deepseek')
+    result = CliRunner().invoke(cli.main, ['make', 'Population', '--model', 'deepseek-flash', '--key', 'deepseek-cli-key'])
+    assert result.exit_code == 0, result.output
+    assert os.environ['GEMINI_API_KEY'] == 'keep-gemini'
+    assert os.environ['DEEPSEEK_API_KEY'] == 'deepseek-cli-key'
+    assert generate.call_args.kwargs['model'] == 'deepseek-flash'

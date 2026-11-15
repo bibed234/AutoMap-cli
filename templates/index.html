@@ -282,7 +282,7 @@
                         <div class="flex justify-between items-center mb-1.5">
                             <label for="apiKeyInput" class="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
                                 <i class="fa-solid fa-key text-amber-400"></i>
-                                Gemini API Key (required — no .env found)
+                                <span id="apiKeyLabel">Gemini API Key</span>
                             </label>
                             <span class="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">Saved in browser</span>
                         </div>
@@ -553,8 +553,9 @@
                             </div>
                             <div class="flex gap-1.5">
                                 <div class="relative flex-1 min-w-0">
-                                    <select id="modelSelect" onchange="updateCommandPreview()" 
+                                    <select id="modelSelect" onchange="onAiModelChange(this.value)"
                                         class="w-full appearance-none px-3 py-2.5 bg-slate-950/90 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-indigo-500 transition pr-7 truncate">
+                                        <optgroup id="geminiModelsGroup" label="Gemini">
                                         <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                         <option value="gemini-4-hydrogen">gemini-4-hydrogen</option>
                                         <option value="gemini-4-carbon">gemini-4-carbon</option>
@@ -566,6 +567,11 @@
                                         <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
                                         <option value="gemma-4-31b-it">gemma-4-31b-it</option>
                                         <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                                        </optgroup>
+                                        <optgroup id="deepseekModelsGroup" label="DeepSeek">
+                                        <option value="deepseek-flash">deepseek-flash</option>
+                                        <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                                        </optgroup>
                                     </select>
                                     <i class="fa-solid fa-chevron-down absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 pointer-events-none"></i>
                                 </div>
@@ -764,7 +770,7 @@
                             </div>
 
                             <div class="text-base font-display font-bold text-white">Synthesizing Cartographic Layer</div>
-                            <div id="loadingStepText" class="text-xs text-indigo-300 mt-1 font-mono">Querying Gemini model and rendering map</div>
+                            <div id="loadingStepText" class="text-xs text-indigo-300 mt-1 font-mono">Querying AI model and rendering map</div>
                             
                             <!-- Multi-stage Step Progress List -->
                             <div class="w-full mt-4 space-y-2 text-left bg-slate-950/80 p-3.5 rounded-xl border border-slate-800/80 font-mono text-[11px]">
@@ -1174,6 +1180,13 @@
         const MAP_PALETTE_STORAGE_KEY = 'automap-map-palette-theme';
         const AI_TEMPERATURE_STORAGE_KEY = 'automap-ai-temperature';
         const API_KEY_STORAGE_KEY = 'automap-gemini-api-key';
+        const PROVIDER_STORAGE_KEY = 'automap-ai-provider';
+        const PROVIDER_KEY_STORAGE = {gemini: API_KEY_STORAGE_KEY, deepseek: 'automap-deepseek-api-key'};
+        const PROVIDER_LABELS = {gemini: 'Gemini', deepseek: 'DeepSeek'};
+        let activeAiProvider = 'gemini';
+        let modelListVersion = 0;
+        const fallbackModels = Array.from(document.getElementById('modelSelect').options, option => option.value);
+        const providerKeys = {gemini: '', deepseek: ''};
         const MAP_TOPIC_STORAGE_KEY = 'automap-map-topic';
         const DEFAULT_AI_TEMPERATURE = 0.75;
 
@@ -1187,6 +1200,8 @@
             } catch {
                 // Keep the default when browser storage is unavailable.
             }
+            populateProviderModels(activeAiProvider);
+            updateProviderKeyLabel();
             restoreMapPaletteTheme();
             updateCommandPreview();
             renderFillingStudio();
@@ -1198,11 +1213,13 @@
             const apiKeyInputEl = document.getElementById('apiKeyInput');
             if (apiKeyInputEl) {
                 apiKeyInputEl.addEventListener('input', () => {
-                    saveBrowserValue(API_KEY_STORAGE_KEY, apiKeyInputEl.value.trim());
+                    providerKeys[activeAiProvider] = apiKeyInputEl.value.trim();
+                    saveBrowserValue(PROVIDER_KEY_STORAGE[activeAiProvider], apiKeyInputEl.value.trim());
                     updateApiKeyIndicator();
                 });
                 apiKeyInputEl.addEventListener('change', () => {
-                    saveBrowserValue(API_KEY_STORAGE_KEY, apiKeyInputEl.value.trim());
+                    providerKeys[activeAiProvider] = apiKeyInputEl.value.trim();
+                    saveBrowserValue(PROVIDER_KEY_STORAGE[activeAiProvider], apiKeyInputEl.value.trim());
                     updateApiKeyIndicator();
                     loadAvailableModels();
                 });
@@ -1267,9 +1284,66 @@
             }
         }
 
+        function modelProvider(model) {
+            return String(model || '').toLowerCase().startsWith('deepseek-') ? 'deepseek' : 'gemini';
+        }
+
+        function populateProviderModels(provider, selectedModel = null) {
+            const select = document.getElementById('modelSelect');
+            const models = fallbackModels.filter(model => modelProvider(model) === provider);
+            if (selectedModel && modelProvider(selectedModel) === provider && !models.includes(selectedModel)) {
+                models.push(selectedModel);
+            }
+            document.getElementById(`${provider}ModelsGroup`).replaceChildren(...models.map(model => new Option(model, model)));
+            if (selectedModel && models.includes(selectedModel)) select.value = selectedModel;
+            else if (modelProvider(select.value) !== provider) select.value = models[0];
+        }
+
+        function updateProviderKeyLabel() {
+            document.getElementById('apiKeyLabel').textContent = `${PROVIDER_LABELS[activeAiProvider]} API Key`;
+            document.getElementById('apiKeyInput').placeholder = `Paste your ${PROVIDER_LABELS[activeAiProvider]} API key...`;
+        }
+
+        function onAiModelChange(model) {
+            changeAiProvider(modelProvider(model), model);
+        }
+
+        function changeAiProvider(provider, selectedModel = null) {
+            if (selectedModel) provider = modelProvider(selectedModel);
+            if (!(provider in PROVIDER_LABELS)) return;
+            const input = document.getElementById('apiKeyInput');
+            if (provider !== activeAiProvider) {
+                providerKeys[activeAiProvider] = input.value.trim();
+                saveBrowserValue(PROVIDER_KEY_STORAGE[activeAiProvider], input.value.trim());
+                activeAiProvider = provider;
+                input.value = providerKeys[provider];
+                input.type = 'password';
+                document.getElementById('apiKeyEyeIcon').className = 'fa-solid fa-eye text-xs';
+                apiKeyRequired = true;
+                document.getElementById('apiKeySection').classList.remove('hidden');
+                populateProviderModels(provider, selectedModel);
+                saveBrowserValue(PROVIDER_STORAGE_KEY, provider);
+                checkApiKeyStatus();
+                loadAvailableModels();
+            } else if (selectedModel) {
+                const select = document.getElementById('modelSelect');
+                if (!Array.from(select.options).some(option => option.value === selectedModel)) {
+                    document.getElementById(`${provider}ModelsGroup`).appendChild(new Option(selectedModel, selectedModel));
+                }
+                select.value = selectedModel;
+            }
+            updateProviderKeyLabel();
+            updateApiKeyIndicator();
+            updateCommandPreview();
+        }
+
         function restoreSavedMapInputs() {
             try {
-                document.getElementById('apiKeyInput').value = localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+                activeAiProvider = localStorage.getItem(PROVIDER_STORAGE_KEY) === 'deepseek' ? 'deepseek' : 'gemini';
+                for (const provider of Object.keys(providerKeys)) {
+                    providerKeys[provider] = localStorage.getItem(PROVIDER_KEY_STORAGE[provider]) || '';
+                }
+                document.getElementById('apiKeyInput').value = providerKeys[activeAiProvider];
                 document.getElementById('topicInput').value = localStorage.getItem(MAP_TOPIC_STORAGE_KEY) || '';
             } catch {
                 // Use empty fields when browser storage is unavailable.
@@ -1317,12 +1391,15 @@
 
         // --- API key status / input ---
         async function checkApiKeyStatus() {
+            const provider = activeAiProvider;
             try {
-                const res = await fetch('/api/status');
+                const res = await fetch(`/api/status?provider=${provider}`);
                 if (!res.ok) throw new Error('status endpoint unavailable');
                 const data = await res.json();
+                if (provider !== activeAiProvider) return;
                 apiKeyRequired = !!data.needs_api_key;
             } catch (err) {
+                if (provider !== activeAiProvider) return;
                 // If we can't determine status, be safe and assume no .env key.
                 apiKeyRequired = true;
                 logToConsole(`[Warning] Could not read /api/status (${err.message}). Assuming API key is required.`, 'warn');
@@ -1332,10 +1409,10 @@
 
             if (apiKeyRequired) {
                 section.classList.remove('hidden');
-                logToConsole('[Info] No .env API key detected — please enter your Gemini API key above.', 'warn');
+                logToConsole(`[Info] Enter your ${PROVIDER_LABELS[provider]} API key above.`, 'warn');
             } else {
                 section.classList.add('hidden');
-                logToConsole('[Info] Server has a Gemini API key from .env — no key input needed.', 'info');
+                logToConsole(`[Info] Server has a ${PROVIDER_LABELS[provider]} API key — no key input needed.`, 'info');
             }
 
             updateApiKeyIndicator();
@@ -1391,6 +1468,8 @@
         }
 
         async function loadAvailableModels() {
+            const provider = activeAiProvider;
+            const version = ++modelListVersion;
             const select = document.getElementById('modelSelect');
             if (!select) return;
             const apiKey = (document.getElementById('apiKeyInput')?.value || '').trim();
@@ -1398,24 +1477,28 @@
                 const res = await fetch('/api/models', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(apiKey ? { api_key: apiKey } : {})
+                    body: JSON.stringify({provider, ...(apiKey ? {api_key: apiKey} : {})})
                 });
                 const data = await res.json();
+                if (provider !== activeAiProvider || version !== modelListVersion) return;
                 if (!res.ok || data.status !== 'success' || !Array.isArray(data.models) || data.models.length === 0) {
                     return;
                 }
                 const prev = select.value;
-                select.replaceChildren();
-                data.models.forEach(modelId => {
+                const models = data.models.filter(model => typeof model === 'string' && modelProvider(model) === provider);
+                if (!models.length) { populateProviderModels(provider); return; }
+                const group = document.getElementById(`${provider}ModelsGroup`);
+                group.replaceChildren();
+                models.forEach(modelId => {
                     const opt = document.createElement('option');
                     opt.value = modelId;
                     opt.textContent = modelId;
-                    select.appendChild(opt);
+                    group.appendChild(opt);
                 });
-                if (data.models.includes(prev)) {
+                if (models.includes(prev)) {
                     select.value = prev;
                 } else {
-                    const preferred = data.models.find(m => m.includes('flash')) || data.models[0];
+                    const preferred = models.find(m => m.includes('flash')) || models[0];
                     select.value = preferred;
                 }
                 updateCommandPreview();
@@ -1476,6 +1559,7 @@
         }
 
         function restoreBatchResultParameters(item) {
+            changeAiProvider(item.provider || modelProvider(item.model), item.model);
             for (const name of ['mode', 'map_type', 'extra_option']) {
                 const input = Array.from(document.getElementsByName(name))
                     .find(input => input.value === item[name]);
@@ -1599,6 +1683,7 @@
                             gsm: item.gsm ?? state.gsm,
                             extra_option: item.extra_option || state.extra_option,
                             model: item.model || state.model,
+                            provider: item.provider || modelProvider(item.model || state.model),
                             font: item.font || state.font,
                             palette_theme: item.palette_theme || state.palette_theme,
                             temperature: item.temperature ?? state.temperature,
@@ -1661,6 +1746,7 @@
             const { filling_txt, filling_num } = buildFillingDictionaries();
 
             return {
+                provider: activeAiProvider,
                 mode,
                 map_type: mapType,
                 gsm,
@@ -1784,13 +1870,14 @@
                 return;
             }
 
+            if (modelProvider(val) !== activeAiProvider) changeAiProvider(modelProvider(val), val);
             const select = document.getElementById('modelSelect');
             const existing = Array.from(select.options).find(opt => opt.value === val);
             if (!existing) {
                 const option = document.createElement('option');
                 option.value = val;
                 option.textContent = val;
-                select.appendChild(option);
+                document.getElementById(`${activeAiProvider}ModelsGroup`).appendChild(option);
             }
             select.value = val;
 
@@ -1871,7 +1958,7 @@
 
             // If the server has no .env key, a key must be entered in the form.
             if (apiKeyRequired && !state.api_key) {
-                logToConsole('[Error] API key is required. Enter your Gemini API key in the form.', 'error');
+                logToConsole(`[Error] Enter your ${PROVIDER_LABELS[activeAiProvider]} API key in the form.`, 'error');
                 showToast("Please enter your Gemini API key first.", "error");
                 document.getElementById('apiKeyInput').focus();
                 return;
@@ -2590,6 +2677,7 @@
             if (!item) return;
 
             const s = item.state;
+            changeAiProvider(s.provider || modelProvider(s.model), s.model);
             const modeRadio = document.querySelector(`input[name="mode"][value="${s.mode}"]`);
             if (modeRadio) modeRadio.checked = true;
             const mapRadio = document.querySelector(`input[name="map_type"][value="${s.map_type}"]`);
@@ -2654,7 +2742,7 @@
             document.querySelector('input[name="map_type"][value="default"]').checked = true;
             syncGsm(15);
             document.querySelector('input[name="extra_option"][value="none"]').checked = true;
-            document.getElementById('modelSelect').selectedIndex = 0;
+            changeAiProvider('gemini', fallbackModels.find(model => modelProvider(model) === 'gemini'));
             document.getElementById('fontSelect').selectedIndex = 0;
             document.getElementById('topicInput').value = '';
             updateCommandPreview();

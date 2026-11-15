@@ -15,10 +15,9 @@
 """Flask web interface for AutoMap.
 
 Serves the single-page UI in ``templates/index.html`` and exposes a small JSON
-API used by that UI. The API key handling is the interesting part: if a ``.env``
-file with a real ``GEMINI_API_KEY`` is present, the web UI never asks for a key.
-If it is missing, ``/api/status`` reports it and the UI shows a key input, whose
-value is forwarded to the generation request only.
+API used by that UI. Gemini and DeepSeek use separate keys from the environment
+or ``.env``. If the selected provider has no configured key, ``/api/status``
+reports it and the UI uses that provider's browser-saved key for the request.
 """
 
 import base64
@@ -55,7 +54,10 @@ from map.auto_map import (
 )
 from map.constants import europe_coords, world_coords
 from cli import AVAILABLE_MODELS
-from map.functions import AIServiceError, parse_ideas_content, slugify_prompt, validate_temperature
+from map.functions import (
+    AIServiceError, configured_api_key, list_deepseek_models, parse_ideas_content,
+    provider_for_model, provider_key_name, slugify_prompt, validate_temperature,
+)
 
 from flask import Flask, request, jsonify, send_file, render_template, Response
 
@@ -99,7 +101,7 @@ def validate_api_json_body():
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify(status='error', error='Request body must be a valid JSON object.'), 400
-        for name in ('api_key', 'url'):
+        for name in ('api_key', 'url', 'provider', 'model'):
             if data.get(name) is not None and not isinstance(data[name], str):
                 return jsonify(status='error', error=f'{name} must be a string.'), 400
 
@@ -180,12 +182,43 @@ def api_codecs():
 
 @app.route('/api/status')
 def api_status():
-    """Report whether the server already has a usable Gemini API key.
+    """Report whether the selected provider already has a server-side key.
 
     Response:
         { "needs_api_key": true }  -> the UI must ask the user for a key
     """
-    return jsonify({"needs_api_key": needs_api_key})
+    provider = request.args.get('provider', 'gemini')
+    if provider not in ('gemini', 'deepseek'):
+        return jsonify(status='error', error='Unknown AI provider.'), 400
+    required = needs_api_key if provider == 'gemini' else not _server_api_key(provider)
+    return jsonify({"needs_api_key": required})
+
+
+def _server_api_key(provider):
+    return configured_api_key(provider, dotenv_values(env) if env.is_file() else {})
+
+
+def _request_provider(data):
+    inferred = provider_for_model(data.get('model') or '')
+    provider = data.get('provider') or inferred
+    if provider not in ('gemini', 'deepseek'):
+        raise ValueError('Unknown AI provider.')
+    if data.get('model') and inferred != provider:
+        raise ValueError('The selected model belongs to a different AI provider.')
+    return provider
+
+
+def _request_api_key(data, provider):
+    supplied = str(data.get('api_key') or '').strip() or None
+    if provider == 'deepseek':
+        resolved = _server_api_key(provider) or supplied
+    else:
+        resolved = supplied
+        if not needs_api_key:
+            return resolved
+    if not resolved:
+        raise ValueError(f'API key required. Provide {provider_key_name(provider)} via .env or the web form.')
+    return resolved
 
 
 def _build_analysis_from_ai(
@@ -423,10 +456,11 @@ def generate():
     data = request.get_json(silent=True) or {}
 
     # Optional user-supplied key (used only when .env has none).
-    api_key = (data.get('api_key') or '').strip() or None
-    if needs_api_key and not api_key:
-        return jsonify({"status": "error",
-                        "error": "API key required. Provide GEMINI_API_KEY via .env or the web form."}), 400
+    try:
+        provider = _request_provider(data)
+        api_key = _request_api_key(data, provider)
+    except ValueError as error:
+        return jsonify(status='error', error=str(error)), 400
 
     # Validate the requested font against what is actually on disk, otherwise
     # auto_map would raise FileNotFoundError when loading the TrueType file.
@@ -514,10 +548,22 @@ def generate():
 
 @app.route('/api/models', methods=['POST'])
 def list_available_models():
-    """Return Gemini/Gemma models available for the active API key."""
+    """Return models available for the selected provider's API key."""
     data = request.get_json(silent=True) or {}
+    try:
+        provider = _request_provider(data)
+    except ValueError as error:
+        return jsonify(status='error', error=str(error), models=[]), 400
+    if provider == 'deepseek':
+        try:
+            models = list_deepseek_models(_request_api_key(data, provider))
+            return jsonify(status='success', models=models)
+        except ValueError as error:
+            return jsonify(status='error', error=str(error), models=[]), 400
+        except AIServiceError as error:
+            return jsonify(status='error', error=str(error), models=[]), error.status_code
     req_key = str(data.get("api_key") or "").strip()
-    env_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    env_key = _server_api_key('gemini') or ''
     key = req_key or env_key
     if not key:
         return jsonify({"status": "error", "error": "API key required.", "models": []}), 400
@@ -577,12 +623,11 @@ def generate_batch():
         filename = str(data.get("filename") or "")
         ideas_text = str(data.get("ideas_text") or "")
 
-    api_key = str(data.get("api_key") or "").strip() or None
-    if needs_api_key and not api_key:
-        return jsonify({
-            "status": "error",
-            "error": "API key required. Provide GEMINI_API_KEY via .env or the web form.",
-        }), 400
+    try:
+        provider = _request_provider(data)
+        api_key = _request_api_key(data, provider)
+    except ValueError as error:
+        return jsonify(status='error', error=str(error)), 400
 
     try:
         ideas = parse_ideas_content(ideas_text, filename=filename)
@@ -595,7 +640,7 @@ def generate_batch():
     default_font, default_eop, default_gsm = _parse_render_params(data)
     default_mode = str(data.get("mode") or "text").lower()
     default_map_type = str(data.get("map_type") or "default").lower()
-    default_model = str(data.get("model") or AVAILABLE_MODELS[0])
+    default_model = str(data.get("model") or ('deepseek-flash' if provider == 'deepseek' else AVAILABLE_MODELS[0]))
     available_fonts = set(_available_fonts())
 
     temperature_options: dict[str, object] = {}
@@ -641,6 +686,10 @@ def generate_batch():
             out_filename += ".png"
 
         try:
+            item_provider = provider_for_model(item_model)
+            item_api_key = api_key if item_provider == provider else _server_api_key(item_provider)
+            if not item_api_key and (item_provider == 'deepseek' or needs_api_key):
+                raise ValueError(f'API key required for {item_provider}. Use one provider per CSV or configure its server key.')
             buffer = auto_map(
                 prompt=prompt,
                 mode=item_mode,
@@ -651,7 +700,7 @@ def generate_batch():
                 font_name=item_font,
                 show_result=False,
                 io_res=True,
-                api_key=api_key,
+                api_key=item_api_key,
                 **temperature_options,
                 **item_style_kwargs,
             )
@@ -687,6 +736,7 @@ def generate_batch():
             "gsm": item_gsm,
             "extra_option": item_eop or "none",
             "model": item_model,
+            "provider": item_provider,
             "font": item_font,
             "palette_theme": item_style_kwargs.get("palette_theme", "auto"),
         }

@@ -33,6 +33,9 @@ AVAILABLE_MODELS = [
     "gemini-3-flash-preview",
     "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
+    # Current DeepSeek API model identifiers: https://api-docs.deepseek.com/
+    "deepseek-flash",
+    "deepseek-v4-pro",
 ]
 
 
@@ -98,7 +101,7 @@ def main():
 @click.option("--key",
               "api_key",
               default=None,
-              help="Gemini API key for this run (overrides GEMINI_API_KEY env var).")
+              help="API key for the selected model provider (overrides its environment key).")
 @click.option("--temperature", type=click.FloatRange(0, 2), default=None,
               help="AI sampling randomness, from 0 to 2. Omit to use the model default.")
 def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, show_result, verbose, api_key, temperature):
@@ -110,7 +113,7 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
     """
     # Lazy import so `automap --help` stays fast and doesn't require API keys.
     from map import log
-    from map.functions import AIServiceError
+    from map.functions import AIServiceError, provider_for_model, provider_key_name
     from map.auto_map import auto_map
 
     ai_options = {}
@@ -129,7 +132,7 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
 
     # A key passed on the command line overrides the env var for this run only.
     if api_key:
-        os.environ["GEMINI_API_KEY"] = api_key
+        os.environ[provider_key_name(provider_for_model(model))] = api_key
 
     # Click accepts mixed-case choices; the renderer compares lowercase names.
     try:
@@ -201,17 +204,17 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
 @click.option("--key",
               "api_key",
               default=None,
-              help="Gemini API key for this run (overrides GEMINI_API_KEY env var).")
+              help="API key for the selected model provider (overrides its environment key).")
 def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, model, font_name, verbose, api_key):
     """Generate multiple maps from ideas listed in a .csv IDEAS_FILE."""
     from map import log
-    from map.functions import AIServiceError
+    from map.functions import AIServiceError, provider_for_model, provider_key_name
     from map.auto_map import auto_map
     from map.functions import load_ideas_from_file, slugify_prompt
 
     log.set_verbose(verbose)
     if api_key:
-        os.environ["GEMINI_API_KEY"] = api_key
+        os.environ[provider_key_name(provider_for_model(model))] = api_key
 
     try:
         ideas = load_ideas_from_file(ideas_file)
@@ -253,7 +256,7 @@ def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, mo
                 font_name=item_font,
                 show_result=False,
                 io_res=True,
-                api_key=api_key,
+                api_key=api_key if provider_for_model(item_model) == provider_for_model(model) else None,
                 **style_options,
             )
         except AIServiceError as error:

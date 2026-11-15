@@ -28,7 +28,7 @@ def map_page(web):
             url = urlsplit(request.url)
             if url.hostname == 'automap.test':
                 response = web.app.test_client().open(
-                    url.path, method=request.method, data=request.post_data,
+                    url.path + ('?' + url.query if url.query else ''), method=request.method, data=request.post_data,
                     content_type=request.headers.get('content-type'))
                 route.fulfill(status=response.status_code, body=response.data,
                               content_type=response.content_type)
@@ -410,3 +410,108 @@ def test_generation_failure_shows_actual_error_and_keeps_retry_available(map_pag
     assert error in page.locator('#generationError').inner_text()
     assert error in page.locator('#toastMsg').inner_text()
     assert page.locator('#generateBtn').is_enabled()
+
+
+def stub_provider_model_lists(page):
+    def respond(route):
+        provider = route.request.post_data_json.get('provider', 'gemini')
+        models = ['deepseek-flash', 'deepseek-v4-pro'] if provider == 'deepseek' else ['gemini-3.8-flash']
+        route.fulfill(json={'status': 'success', 'models': models})
+    page.route('**/api/models', respond)
+
+
+def test_provider_groups_and_keys_survive_switches_reload_and_independent_clear(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.evaluate('closeFillingStudio()')
+    assert page.locator('#modelSelect optgroup').count() == 2
+    assert page.locator('#modelSelect optgroup').evaluate_all('(groups) => groups.map(group => group.label)') == ['Gemini', 'DeepSeek']
+    page.locator('#apiKeyInput').fill('gemini-browser-key')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.wait_for_function("activeAiProvider === 'deepseek' && document.getElementById('apiKeyLabel').textContent.includes('DeepSeek')")
+    assert page.locator('#apiKeyInput').input_value() == ''
+    page.locator('#apiKeyInput').fill('deepseek-browser-key')
+    page.reload()
+    page.wait_for_function("activeAiProvider === 'deepseek' && getFormState().model === 'deepseek-flash'")
+    assert page.locator('#apiKeyInput').input_value() == 'deepseek-browser-key'
+    assert page.locator('#apiKeyInput').get_attribute('type') == 'password'
+    assert page.evaluate('getFormState().provider') == 'deepseek'
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'gemini-browser-key'
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('')
+    page.reload()
+    assert page.locator('#apiKeyInput').input_value() == ''
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'gemini-browser-key'
+    assert page.locator('#modelSelect optgroup').count() == 2
+
+
+def test_deepseek_generation_sends_only_active_provider_key(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.evaluate('closeFillingStudio()')
+    page.locator('#apiKeyInput').fill('gemini-do-not-send')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('deepseek-use-this')
+    page.locator('#topicInput').fill('Population of Europe')
+    payloads = []
+    def capture(route):
+        payloads.append(route.request.post_data_json)
+        route.fulfill(status=503, json={'status': 'error', 'error': 'DeepSeek is overloaded. Please try again.'})
+    page.route('**/api/generate', capture)
+    page.click('#generateBtn')
+    page.wait_for_function("!document.getElementById('generateBtn').disabled")
+    assert len(payloads) == 1
+    assert payloads[0]['model'] == 'deepseek-flash'
+    assert payloads[0]['provider'] == 'deepseek'
+    assert payloads[0]['api_key'] == 'deepseek-use-this'
+    assert 'gemini-do-not-send' not in str(payloads)
+    assert 'DeepSeek is overloaded' in page.locator('#generationError').inner_text()
+
+
+def test_server_deepseek_key_hides_input_without_exposing_key(map_page, monkeypatch):
+    page = map_page
+    stub_provider_model_lists(page)
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'server-deepseek-never-expose')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.wait_for_function("activeAiProvider === 'deepseek' && !apiKeyRequired")
+    assert page.locator('#apiKeySection').is_hidden()
+    assert page.locator('#apiKeyInput').input_value() == ''
+    assert 'server-deepseek-never-expose' not in page.content()
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    page.wait_for_function('apiKeyRequired')
+    assert page.locator('#apiKeySection').is_visible()
+
+
+def test_provider_keys_stay_independent_when_storage_is_blocked(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.add_init_script('''Object.defineProperty(window, 'localStorage', {
+        get() { throw new DOMException('Storage blocked', 'SecurityError'); }
+    });''')
+    page.reload()
+    page.locator('#apiKeyInput').fill('gemini-memory')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('deepseek-memory')
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'gemini-memory'
+    page.select_option('#modelSelect', 'deepseek-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'deepseek-memory'
+
+
+def test_history_uses_model_provider_and_its_saved_key(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.evaluate('closeFillingStudio()')
+    page.locator('#apiKeyInput').fill('gemini-history-key')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('deepseek-history-key')
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    page.evaluate('''() => {
+        addToHistory({...getFormState(), provider:'gemini', model:'deepseek-flash'}, 'Legacy history');
+        restoreHistoryItem(0);
+    }''')
+    assert page.evaluate('getFormState().provider') == 'deepseek'
+    assert page.locator('#apiKeyInput').input_value() == 'deepseek-history-key'
+    assert page.locator('#modelSelect').input_value() == 'deepseek-flash'

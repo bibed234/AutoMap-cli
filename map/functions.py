@@ -2,8 +2,10 @@ import csv
 import io
 import json
 import math
+import os
 import re
 import sys
+import requests
 try:
     import httpx2 as httpx
 except ImportError:  # Older google-genai releases use the original transport.
@@ -20,6 +22,22 @@ from ast import literal_eval
 load_dotenv(".env")  # loading .env file
 
 AI_TIMEOUT_MS = 45_000
+DEEPSEEK_API_URL = 'https://api.deepseek.com'
+
+
+def provider_for_model(model):
+    """DeepSeek models use their own endpoint and credentials."""
+    return 'deepseek' if str(model).lower().startswith('deepseek-') else 'gemini'
+
+
+def provider_key_name(provider):
+    return 'DEEPSEEK_API_KEY' if provider == 'deepseek' else 'GEMINI_API_KEY'
+
+
+def configured_api_key(provider, settings=None):
+    name = provider_key_name(provider)
+    value = (os.environ.get(name) or (settings or {}).get(name) or '').strip()
+    return value if value and not value.lower().startswith('your_') else None
 
 
 class AIServiceError(RuntimeError):
@@ -28,6 +46,81 @@ class AIServiceError(RuntimeError):
     def __init__(self, message, status_code=503):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _deepseek_json(path, api_key, *, payload=None, timeout=45):
+    """Call only the fixed DeepSeek origin; never expose upstream credential errors."""
+    if not api_key:
+        raise AIServiceError('DeepSeek API key required. Set DEEPSEEK_API_KEY or enter it in the web form.', 400)
+    headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/json'}
+    try:
+        if payload is None:
+            response = requests.get(f'{DEEPSEEK_API_URL}/{path}', headers=headers,
+                                    timeout=(10, timeout), allow_redirects=False)
+        else:
+            response = requests.post(f'{DEEPSEEK_API_URL}/{path}', headers=headers, json=payload,
+                                     timeout=(10, timeout), allow_redirects=False)
+    except requests.Timeout as error:
+        raise AIServiceError(f'DeepSeek did not respond within {timeout} seconds. Try again or select another model.', 504) from error
+    except requests.RequestException as error:
+        raise AIServiceError('Could not connect to DeepSeek. Please try again later.', 503) from error
+    try:
+        status = response.status_code
+        if status in (401, 403):
+            raise AIServiceError('DeepSeek rejected the API key. Check your key and account access.', 400)
+        if status == 402:
+            raise AIServiceError('Your DeepSeek account has insufficient balance. Top up your DeepSeek account.', 402)
+        if status == 429:
+            raise AIServiceError('DeepSeek request limit reached. Please try again later.', 429)
+        if status >= 500:
+            raise AIServiceError('DeepSeek is overloaded or temporarily unavailable. Try again shortly or select another model.', 503)
+        if status != 200:
+            raise AIServiceError('DeepSeek could not process the request. Check the selected model and API access.', 400)
+        try:
+            result = response.json()
+        except ValueError as error:
+            raise AIServiceError('DeepSeek returned an invalid response. Please try again.', 502) from error
+        if not isinstance(result, dict) or result.get('error'):
+            raise AIServiceError('DeepSeek could not complete the request. Please try again.', 502)
+        return result
+    finally:
+        response.close()
+
+
+def list_deepseek_models(api_key):
+    result = _deepseek_json('models', api_key, timeout=15)
+    models = result.get('data')
+    if not isinstance(models, list):
+        raise AIServiceError('DeepSeek returned an invalid model list.', 502)
+    return sorted({model['id'] for model in models if isinstance(model, dict)
+                   and isinstance(model.get('id'), str) and model['id'].startswith('deepseek-')})
+
+
+def _deepseek_request(prompt, model, api_key=None, *, temperature=None):
+    payload = {
+        'model': model,
+        'messages': [
+            {'role': 'system', 'content': 'Return only a JSON object mapping region names to values. Example: {"ukraine": 42}.'},
+            {'role': 'user', 'content': prompt},
+        ],
+        'response_format': {'type': 'json_object'},
+        'thinking': {'type': 'disabled'},
+        'max_tokens': 4096,
+        'stream': False,
+    }
+    if temperature is not None:
+        payload['temperature'] = validate_temperature(temperature)
+    result = _deepseek_json('chat/completions', api_key or configured_api_key('deepseek'), payload=payload)
+    try:
+        choice = result['choices'][0]
+        content = choice['message']['content']
+    except (KeyError, IndexError, TypeError) as error:
+        raise AIServiceError('DeepSeek returned no map data. Please try again.', 502) from error
+    if choice.get('finish_reason') == 'length':
+        raise AIServiceError('DeepSeek returned an incomplete map. Try a shorter prompt.', 502)
+    if not isinstance(content, str) or not content.strip():
+        raise AIServiceError('DeepSeek returned no map data. Please try again.', 502)
+    return content
 
 
 def _error(title: str, message: str = ""):
@@ -76,6 +169,9 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> st
     config = {} if temperature is None else {
         'config': types.GenerateContentConfig(temperature=validate_temperature(temperature)),
     }
+    if provider_for_model(ai_model) == 'deepseek':
+        with log.spinner('Waiting for DeepSeek response...'):
+            return _deepseek_request(prompt_to_ai, ai_model, api_key, temperature=temperature)
     try:
         with log.spinner("Waiting for AI response..."):
             # If a key was supplied (e.g. from the web UI when .env is missing),
