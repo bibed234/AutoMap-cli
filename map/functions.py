@@ -97,35 +97,43 @@ def list_deepseek_models(api_key):
 
 
 def _web_search_ddg(query, max_results=5):
-    """Fetch top web search snippets from DuckDuckGo HTML without external dependencies."""
+    """Fetch top web search snippets from Wikipedia's public search API without external dependencies."""
     try:
-        resp = requests.post(
-            'https://html.duckduckgo.com/html/',
-            data={'q': str(query)},
-            headers={'User-Agent': 'Mozilla/5.0 (compatible; AutoMap/1.0)'},
+        resp = requests.get(
+            'https://en.wikipedia.org/w/api.php',
+            params={
+                'action': 'query',
+                'list': 'search',
+                'srsearch': str(query),
+                'srlimit': int(max_results),
+                'format': 'json',
+                'utf8': 1,
+            },
+            headers={'User-Agent': 'AutoMap-cli/1.0 (https://github.com/deltaaa00/AutoMap-cli)'},
             timeout=(5, 10),
         )
         if resp.status_code != 200:
             return f'Search failed (HTTP {resp.status_code}).'
-        html_text = resp.text
-    except requests.RequestException as err:
+        data = resp.json()
+    except (requests.RequestException, ValueError) as err:
         return f'Search error: {err}'
 
-    snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html_text, flags=re.S)
-    titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html_text, flags=re.S)
-    clean = lambda s: re.sub(r'<[^>]+>', '', s).replace('&amp;', '&').replace('&quot;', '"').strip()
+    results = data.get('query', {}).get('search') or []
     lines = []
-    for i in range(min(max_results, max(len(titles), len(snippets)))):
-        t = clean(titles[i]) if i < len(titles) else ''
-        s = clean(snippets[i]) if i < len(snippets) else ''
-        if t or s:
-            lines.append(f'- {t}: {s}' if t and s else f'- {t or s}')
+    for item in results[:max_results]:
+        title = str(item.get('title') or '').strip()
+        snippet = re.sub(r'<[^>]+>', '', str(item.get('snippet') or '')).replace('&quot;', '"').replace('&amp;', '&').strip()
+        if title or snippet:
+            lines.append(f'- {title}: {snippet}' if title and snippet else f'- {title or snippet}')
     return '\n'.join(lines) if lines else 'No search results found.'
 
 
 def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_search=False, max_search_requests=5):
+    sys_msg = 'Return only a JSON object mapping region names to values. Example: {"ukraine": 42}.'
+    if web_search:
+        sys_msg += ' You have access to the web_search tool—use it to look up accurate, up-to-date facts and statistics before answering.'
     messages = [
-        {'role': 'system', 'content': 'Return only a JSON object mapping region names to values. Example: {"ukraine": 42}.'},
+        {'role': 'system', 'content': sys_msg},
         {'role': 'user', 'content': prompt},
     ]
     payload = {
