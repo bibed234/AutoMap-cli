@@ -98,6 +98,7 @@ def list_deepseek_models(api_key):
 
 def _web_search_ddg(query, max_results=5):
     """Fetch top web search snippets from Wikipedia's public search API without external dependencies."""
+    # Use MediaWiki's JSON search API instead of scraping HTML search pages that return HTTP 202 bot challenges.
     try:
         resp = requests.get(
             'https://en.wikipedia.org/w/api.php',
@@ -160,6 +161,7 @@ def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_sear
     if temperature is not None:
         payload['temperature'] = validate_temperature(temperature)
 
+    # Track remaining search calls so the model cannot loop indefinitely on tool_calls.
     budget = max(1, min(10, int(max_search_requests or 5)))
     key = api_key or configured_api_key('deepseek')
     result = _deepseek_json('chat/completions', key, payload=payload)
@@ -173,6 +175,8 @@ def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_sear
         tool_calls = msg.get('tool_calls') or []
         if choice.get('finish_reason') != 'tool_calls' or not tool_calls:
             break
+
+        # Append the assistant's tool-call turn, then answer each tool call in order.
         messages.append(msg)
         for tc in tool_calls:
             if budget <= 0:
@@ -185,6 +189,8 @@ def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_sear
             except ValueError:
                 q = prompt
             messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': _web_search_ddg(q)})
+
+        # Once the search budget is spent, strip `tools` so DeepSeek must return the final JSON.
         if budget <= 0:
             payload.pop('tools', None)
         result = _deepseek_json('chat/completions', key, payload=payload)
