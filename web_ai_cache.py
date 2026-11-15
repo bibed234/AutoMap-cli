@@ -1,0 +1,79 @@
+"""In-memory cache of AI map data so visual-only changes skip the AI request.
+
+Entries are keyed by a SHA-256 digest of the request-affecting inputs
+(prompt, map type, model, provider, temperature, short-form flag) plus a
+per-user scope. The scope is derived from the web session identity and a
+*hash* of any user-supplied API key; the key itself is never stored.
+Only the parsed AI answer (region -> value) is kept as cache content.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import threading
+import time
+from collections import OrderedDict
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+class AIResponseCache:
+    def __init__(self, ttl_seconds: int = 3600, max_entries: int = 256):
+        self.ttl = ttl_seconds
+        self.max_entries = max_entries
+        self._data: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return self.ttl > 0 and self.max_entries > 0
+
+    @staticmethod
+    def scope(identity: str | None, api_key: str | None) -> str:
+        key_part = hashlib.sha256(api_key.encode()).hexdigest() if api_key else ''
+        return hashlib.sha256(f"{identity or ''}\0{key_part}".encode()).hexdigest()
+
+    @staticmethod
+    def make_key(scope: str, **fields: object) -> str:
+        blob = json.dumps(fields, sort_keys=True, default=str, ensure_ascii=False)
+        return hashlib.sha256(f"{scope}\0{blob}".encode()).hexdigest()
+
+    def get(self, key: str) -> dict | None:
+        if not self.enabled:
+            return None
+        with self._lock:
+            item = self._data.get(key)
+            if item is None:
+                return None
+            stored_at, value = item
+            if time.monotonic() - stored_at > self.ttl:
+                del self._data[key]
+                return None
+            self._data.move_to_end(key)
+            return dict(value)
+
+    def put(self, key: str, value: dict) -> None:
+        if not self.enabled or not isinstance(value, dict) or not value:
+            return
+        with self._lock:
+            self._data[key] = (time.monotonic(), dict(value))
+            self._data.move_to_end(key)
+            while len(self._data) > self.max_entries:
+                self._data.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+
+ai_cache = AIResponseCache(
+    ttl_seconds=_env_int('AI_CACHE_TTL', 3600),
+    max_entries=_env_int('AI_CACHE_MAX_ENTRIES', 256),
+)

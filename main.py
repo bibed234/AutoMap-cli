@@ -28,7 +28,7 @@ import time
 
 from pathlib import Path
 from PIL import Image, UnidentifiedImageError
-import requests
+import requests as _requests_module
 
 # auto_map() loads fonts/maps via *relative* paths ("resources/fonts", ...),
 # so the process must run from the AutoMap-cli project directory. Anchor the
@@ -59,7 +59,8 @@ from map.functions import (
     provider_for_model, provider_key_name, slugify_prompt, validate_temperature,
 )
 
-from flask import Flask, request, jsonify, send_file, render_template, Response
+from flask import Flask, request, jsonify, send_file, render_template, Response, session
+from web_ai_cache import ai_cache
 
 FONTS_DIR = BASE_DIR / "resources" / "fonts"
 
@@ -68,6 +69,37 @@ key = (os.environ.get("GEMINI_API_KEY") or "").strip()
 if not key and env.is_file():
     key = (dotenv_values(env).get("GEMINI_API_KEY") or "").strip()
 needs_api_key = not key or key.startswith("your_")
+
+class _PooledRequests:
+    """``requests``-compatible facade that reuses one pooled Session.
+
+    Keeps keep-alive connections to the worker instead of opening a new TCP
+    connection per proxied call. Attribute access (exceptions, etc.) falls
+    through to the ``requests`` module, and tests can still patch
+    ``main.requests.get``/``post``.
+    """
+
+    def __init__(self):
+        self._session = _requests_module.Session()
+        self._orig_get = _requests_module.get
+        self._orig_post = _requests_module.post
+
+    def get(self, *args, **kwargs):
+        if _requests_module.get is not self._orig_get:
+            return _requests_module.get(*args, **kwargs)
+        return self._session.get(*args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        if _requests_module.post is not self._orig_post:
+            return _requests_module.post(*args, **kwargs)
+        return self._session.post(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(_requests_module, name)
+
+
+requests = _PooledRequests()
+
 WORKER_URL = (os.environ.get("YTDLP_URL") or "http://yt-dlp-worker:8080").rstrip('/')
 
 
@@ -123,7 +155,6 @@ def studio():
 
 @app.route('/api/video_title_preview', methods=['POST'])
 def video_title_preview():
-    import requests
 
     data = request.get_json(silent=True) or {}
     allowed_keys = (
@@ -171,7 +202,6 @@ def api_fonts():
 @app.route('/api/codecs')
 def api_codecs():
     """Ask the render worker which encoders its FFmpeg and hardware can use."""
-    import requests
 
     try:
         response = requests.get(f'{WORKER_URL}/api/codecs', timeout=20)
@@ -219,6 +249,48 @@ def _request_api_key(data, provider):
     if not resolved:
         raise ValueError(f'API key required. Provide {provider_key_name(provider)} via .env or the web form.')
     return resolved
+
+
+_TRUTHY = {'1', 'true', 'yes', 'on'}
+
+
+def _wants_refresh(data) -> bool:
+    value = data.get('refresh_ai', data.get('refresh', False))
+    return value is True or str(value).strip().lower() in _TRUTHY
+
+
+def _auto_map_with_ai_cache(*, refresh: bool, provider: str, api_key, **kwargs):
+    """Call auto_map, reusing a cached AI answer for identical data requests.
+
+    Only request-affecting inputs form the key, so font/style/palette changes
+    reuse the answer. API keys only contribute a hash to the user scope.
+    Returns (buffer, cache_hit).
+    """
+    temperature = kwargs.get('temperature')
+    identity = ''
+    try:
+        identity = str(session.get('web_identity', '') or '')
+    except RuntimeError:
+        identity = ''
+    cache_key = ai_cache.make_key(
+        ai_cache.scope(identity, api_key),
+        prompt=str(kwargs.get('prompt') or ''),
+        map_type=str(kwargs.get('map_type') or ''),
+        model=str(kwargs.get('model') or ''),
+        provider=provider,
+        temperature=temperature,
+        short_form=kwargs.get('optional_feature') == 'short_form',
+    )
+    cached = None if refresh else ai_cache.get(cache_key)
+    if cached is not None:
+        kwargs['ai_answer_override'] = cached
+    buffer = auto_map(api_key=api_key, **kwargs)
+    if cached is None and buffer is not None:
+        meta = getattr(buffer, 'map_meta', None)
+        answer = meta.get('ai_answer') if isinstance(meta, dict) else None
+        if isinstance(answer, dict):
+            ai_cache.put(cache_key, answer)
+    return buffer, cached is not None
 
 
 def _build_analysis_from_ai(
@@ -495,7 +567,9 @@ def generate():
             style_kwargs[kw_name] = data[style_key]
 
     try:
-        buffer = auto_map(
+        buffer, ai_cache_hit = _auto_map_with_ai_cache(
+            refresh=_wants_refresh(data),
+            provider=provider,
             prompt=data['topic'],
             mode=data['mode'],
             map_type=data['map_type'],
@@ -530,6 +604,7 @@ def generate():
         "status": "success",
         "command": command,
         "image_url": f"data:image/png;base64,{encoded}",
+        "ai_cached": ai_cache_hit,
     }
     render_meta = getattr(buffer, "map_meta", None)
     ai_vals = render_meta.get("ai_answer") if isinstance(render_meta, dict) else None
@@ -690,7 +765,9 @@ def generate_batch():
             item_api_key = api_key if item_provider == provider else _server_api_key(item_provider)
             if not item_api_key and (item_provider == 'deepseek' or needs_api_key):
                 raise ValueError(f'API key required for {item_provider}. Use one provider per CSV or configure its server key.')
-            buffer = auto_map(
+            buffer, _hit = _auto_map_with_ai_cache(
+                refresh=_wants_refresh(data),
+                provider=item_provider,
                 prompt=prompt,
                 mode=item_mode,
                 map_type=item_map_type,
@@ -914,7 +991,6 @@ def music_download():
         { "status": "success", "file": "<base64 mp3>", "title": "<song title>" }
         { "status": "error", "error": "<message>" }
     """
-    import requests
 
     data = request.get_json(silent=True) or {}
     url = (data.get('url') or '').strip()
@@ -972,7 +1048,6 @@ def cut_audio() -> tuple[object, int]:
         { "status": "success", "file": "<base64 mp3>", "title": "<song title>" }
         { "status": "error", "error": "<message>" }
     """
-    import requests
 
     data: dict[str, object] = request.get_json(silent=True) or {}
     start_time = str(data.get('start_time') or '').strip()
@@ -1013,6 +1088,32 @@ def cut_audio() -> tuple[object, int]:
     return jsonify(payload), response.status_code
 
 
+def _render_video_request_data():
+    """Return render settings from JSON or from a binary multipart upload.
+
+    Multipart form: a ``payload`` field holding the JSON settings object plus
+    file parts named like the JSON fields (``map_file``, ``background_video``,
+    ``audio_file``, ...). Files are converted to the data URLs the worker
+    expects, so the browser avoids base64 encoding and the ~33% upload overhead.
+    """
+    if not request.files and 'payload' not in request.form:
+        return request.get_json(silent=True) or {}
+    import json
+    try:
+        data = json.loads(request.form.get('payload') or '{}')
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for field, storage in request.files.items():
+        raw = storage.read()
+        if not raw:
+            continue
+        mime = storage.mimetype or 'application/octet-stream'
+        data[field] = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    return data
+
+
 @app.route('/api/render_video', methods=['POST'])
 @app.route('/api/render_video/', methods=['POST'])
 def make_video() -> tuple[object, int]:
@@ -1031,9 +1132,10 @@ def make_video() -> tuple[object, int]:
         { "status": "success", "file_path": "...", "download_url": "..." }
         { "status": "error", "error": "<message>" }
     """
-    import requests
 
-    data: dict[str, object] = request.get_json(silent=True) or {}
+    data = _render_video_request_data()
+    if data is None:
+        return jsonify(status='error', error='Invalid multipart payload field.'), 400
 
     # The frontend sends base64 strings; keep them as-is (default to empty string).
     map_b64 = data.get('map_file') or ''
@@ -1121,7 +1223,6 @@ def download_video():
     lives in the worker container's storage, so we proxy the download to the
     worker and stream its response back as an attachment.
     """
-    import requests
     from flask import Response
 
     raw_path = (request.args.get('path') or '').strip()
