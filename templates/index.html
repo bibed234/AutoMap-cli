@@ -373,7 +373,7 @@
                             <div class="flex items-center gap-2">
                                 <label for="ideasFileInput" class="flex-1 cursor-pointer px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-[11px] font-medium text-slate-300 hover:text-white transition text-center truncate">
                                     <i class="fa-solid fa-upload mr-1 text-indigo-400"></i>
-                                    Choose CSV File
+                                    <span id="ideasFileLabelText">Choose or Drop CSV</span>
                                 </label>
                                 <input type="file" id="ideasFileInput" accept=".csv" class="hidden" onchange="handleIdeasFileSelected(event)">
                                 <button type="button" id="generateBatchBtn" onclick="generateMapsFromFile()" disabled
@@ -1659,10 +1659,16 @@
 
         async function loadIdeasFile(file) {
             const badge = document.getElementById('ideasFileBadge');
+            const labelText = document.getElementById('ideasFileLabelText');
             const btn = document.getElementById('generateBatchBtn');
             if (!file) {
                 loadedIdeasFile = { filename: '', text: '' };
-                if (badge) badge.textContent = 'No file';
+                if (badge) {
+                    badge.textContent = 'No file';
+                    badge.className = 'text-[10px] font-mono text-slate-500 truncate max-w-[110px]';
+                    badge.removeAttribute('title');
+                }
+                if (labelText) labelText.textContent = 'Choose or Drop CSV';
                 if (btn) btn.disabled = true;
                 return;
             }
@@ -1673,7 +1679,12 @@
             try {
                 const text = await file.text();
                 loadedIdeasFile = { filename: file.name, text };
-                if (badge) badge.textContent = file.name;
+                if (badge) {
+                    badge.textContent = file.name;
+                    badge.title = file.name;
+                    badge.className = 'text-[10px] font-mono text-emerald-400 truncate max-w-[140px]';
+                }
+                if (labelText) labelText.textContent = `Loaded: ${file.name}`;
                 if (btn) btn.disabled = !text.trim();
                 logToConsole(`[Batch] Loaded ideas file "${file.name}" (${text.length} chars). Click "Generate All" to render.`, 'info');
                 showToast(`Loaded "${file.name}" — ready to generate maps!`, 'info');
