@@ -2,7 +2,7 @@
 <html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Video Studio — AutoMap</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -253,6 +253,54 @@
             border-radius: 10px;
             filter: invert(0.92) hue-rotate(180deg) brightness(0.95) contrast(1.05);
         }
+
+        /* Let grid and flex children shrink around long filenames and font names. */
+        main > section, main form, main .grid > *, main .flex > * { min-width: 0; }
+        button, a, summary, .dropzone, #watermarkDropzone { touch-action: manipulation; }
+
+        @media (max-width: 639px) {
+            body { min-height: 100svh; }
+            header { position: relative !important; }
+            .studio-navigation {
+                height: auto !important;
+                min-height: 64px;
+                padding-top: max(12px, env(safe-area-inset-top));
+                padding-bottom: 12px;
+                flex-wrap: wrap;
+                gap: 12px !important;
+            }
+            .studio-navigation h1 { font-size: 16px; }
+            .studio-navigation-actions { width: 100%; gap: 8px !important; }
+            .studio-navigation-actions a { flex: 1; justify-content: center; }
+            .studio-navigation-actions a, .studio-navigation-actions button { min-height: 44px; }
+            main { padding: 12px !important; gap: 16px !important; }
+            main > section { gap: 16px !important; }
+            main .studio-glass.p-5, #renderForm { padding: 14px; }
+            main .justify-between { flex-wrap: wrap; gap: 8px; }
+            main code { overflow-wrap: anywhere; }
+            main input:not([type="checkbox"]):not([type="range"]):not([type="hidden"]),
+            main select, main textarea { font-size: 16px; min-height: 44px; max-width: 100%; }
+            main input[type="file"] { font-size: 13px; }
+            main button, main summary { min-height: 44px; }
+            main button { overflow-wrap: anywhere; }
+            main label:has(input[type="checkbox"]) { min-height: 44px; }
+            main input[type="checkbox"] { width: 20px; height: 20px; flex-shrink: 0; }
+            main input[type="range"] { min-height: 32px; min-width: 0; }
+            .sticker-pickers { grid-template-columns: minmax(0, 1fr) !important; }
+            #subscribeFileName + div, #watermarkStarsFileName + div { flex-wrap: wrap; flex-shrink: 1; width: 100%; }
+            #codecPanel > .grid { grid-template-columns: minmax(0, 1fr); }
+            #codecPanel > .flex > select { width: 100%; }
+            .video-preview-stage { width: min(100%, 315px, 45svh); }
+            #renderResult button { width: 100%; justify-content: center; }
+            #consoleTabContent { overflow-wrap: anywhere; }
+            #toast {
+                left: max(12px, env(safe-area-inset-left));
+                right: max(12px, env(safe-area-inset-right));
+                bottom: max(12px, env(safe-area-inset-bottom));
+                max-width: none;
+                overflow-wrap: anywhere;
+            }
+        }
     </style>
 </head>
 <body class="studio-backdrop text-slate-100 font-sans min-h-screen flex flex-col selection:bg-indigo-500 selection:text-white overflow-x-hidden relative">
@@ -266,7 +314,7 @@
 
     <!-- Top Navigation Bar -->
     <header class="border-b border-slate-800/80 bg-slate-950/75 backdrop-blur-xl sticky top-0 z-30">
-        <div class="max-w-[1640px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        <div class="studio-navigation max-w-[1640px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
             <!-- Brand & Studio Status -->
             <div class="flex items-center gap-3.5">
                 <div class="relative group">
@@ -316,7 +364,7 @@
             </div>
 
             <!-- Right Studio Controls & Navigation -->
-            <div class="flex items-center gap-3">
+            <div class="studio-navigation-actions flex items-center gap-3">
                 <!-- Workflow Step Indicator -->
                 <div class="hidden xl:flex items-center gap-2 bg-slate-900/90 border border-slate-800/90 rounded-xl px-3 py-1.5 text-[11px] font-mono text-slate-400">
                     <span class="text-rose-400 font-semibold">01 Audio</span>
@@ -850,7 +898,7 @@
                                     </div>
                                 </div>
 
-                                <div class="grid grid-cols-2 gap-3">
+                                <div class="sticker-pickers grid grid-cols-2 gap-3">
                                     <div>
                                         <label for="topLeftStickerSelect" class="text-xs text-slate-300">Top-left sticker
                                             <select id="topLeftStickerSelect" onchange="updateAutoMontagePreview()" class="mt-1 w-full px-2 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white">

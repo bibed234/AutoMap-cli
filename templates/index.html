@@ -163,6 +163,48 @@
             border: 1px solid rgba(255, 255, 255, 0.2);
             border-radius: 0.5rem;
         }
+        /* Phone layouts keep controls reachable without shrinking form text. */
+        @media (max-width: 639px) {
+            header > div { height: auto !important; min-height: 64px; flex-wrap: wrap; gap: 10px !important; padding-block: 12px; }
+            header > div > div:last-child { width: 100%; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+            header a, header button { min-height: 44px; }
+            #headerApiText { font-size: 10px; }
+            main { padding: 12px !important; gap: 16px !important; }
+            main > section, #cliForm, #fillingStudioModal .flex-1 { min-width: 0; }
+            main > section > .p-5 { padding: 16px; }
+            #cliForm input:not([type=radio]):not([type=checkbox]):not([type=range]):not([type=color]),
+            #cliForm textarea, #cliForm select,
+            #fillingStudioModal input:not([type=checkbox]):not([type=range]):not([type=color]),
+            #fillingStudioModal select { font-size: 16px; min-height: 44px; }
+            main button, #fillingStudioModal button { min-height: 44px; }
+            #cliForm input[type=range], #fillingStudioModal input[type=range] { min-width: 0; min-height: 28px; }
+            #cliForm .justify-between:has(> label) { flex-wrap: wrap; gap: 6px; }
+            #cliForm code { overflow-wrap: anywhere; }
+            .mobile-style-entry { flex-wrap: wrap; }
+            .mobile-style-entry > div:last-child { width: 100%; justify-content: flex-end; }
+            #mapStage { min-height: 440px; scroll-margin-top: 145px; }
+            #mapStage > div:first-child { padding: 12px; }
+            #mapStage > div:first-child > div { flex-wrap: wrap; gap: 8px; }
+            #mapStage button { min-width: 44px; }
+            #mapViewport { min-height: 340px; padding: 12px 12px 60px; }
+            #serverMapImage { max-width: 100%; max-height: 60svh; }
+            #emptyState { padding: 20px 12px; }
+            #fillingStudioModal { padding: 8px; }
+            #fillingStudioModal > div { max-height: calc(100dvh - 16px); }
+            #fillingStudioModal > div > div { padding: 12px; }
+            #fillingStudioModal > div > div:first-child { flex-shrink: 0; gap: 8px; }
+            #fillingStudioModal > div > div:first-child > div { gap: 10px; min-width: 0; }
+            #fillingStudioModal h3 + code { display: none; }
+            #fillingStudioModal h3 { font-size: 14px; }
+            #fillingStudioModal > div > div:first-child p { font-size: 10px; }
+            #fillingStudioModal button[onclick="closeFillingStudio()"] { min-width: 44px; flex-shrink: 0; }
+            #fillingStudioModal > div > div:last-child { flex-shrink: 0; }
+            #fillingNumList input[type=number] { width: 0; flex: 1; min-width: 0; padding-inline: 5px; }
+            #fillingNumList button, #fillingTxtList button { min-width: 36px; flex-shrink: 0; }
+            #fillingNumList input[type=color], #fillingTxtList input[type=color] { width: 32px; height: 44px; }
+            #toast { left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); overflow-wrap: anywhere; }
+            .aurora-blob-1, .aurora-blob-2, .aurora-blob-3 { animation: none; }
+        }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col selection:bg-indigo-500 selection:text-white overflow-x-hidden relative">
@@ -251,6 +293,10 @@
     <!-- Main Workspace Layout -->
     <main class="relative z-10 flex-1 max-w-[1640px] w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         
+        <nav aria-label="Workspace sections" class="flex gap-2 lg:hidden col-span-full">
+            <a href="#cliForm" class="flex-1 text-center text-xs font-semibold rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-indigo-200">Parameters</a>
+            <a href="#mapStage" class="flex-1 text-center text-xs font-semibold rounded-xl border border-indigo-500/40 bg-indigo-500/15 px-3 py-3 text-indigo-200">Map preview</a>
+        </nav>
         <!-- LEFT COLUMN: CLI FLAGS & CONFIGURATION (5 Cols on Desktop) -->
         <section class="lg:col-span-5 xl:col-span-4 flex flex-col gap-5">
             
@@ -275,7 +321,7 @@
                     </button>
                 </div>
 
-                <form id="cliForm" onsubmit="handleGenerate(event)" class="space-y-5">
+                <form style="scroll-margin-top: 145px" id="cliForm" onsubmit="handleGenerate(event)" class="space-y-5">
                     
                     <!-- API Key Input: shown only when the server has no .env key -->
                     <div id="apiKeySection" class="hidden p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/30 transition-colors">
@@ -660,7 +706,7 @@
                     </div>
 
                     <!-- Color Filling Studio: single entry in the left panel -->
-                    <div class="p-3 rounded-xl bg-slate-950/75 border border-slate-800/90 flex items-center justify-between gap-3">
+                    <div class="mobile-style-entry p-3 rounded-xl bg-slate-950/75 border border-slate-800/90 flex items-center justify-between gap-3">
                         <div class="min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="text-xs font-semibold text-slate-200">Color &amp; Label Style</span>
@@ -753,7 +799,7 @@
         <section class="lg:col-span-7 xl:col-span-8 flex flex-col gap-5">
             
             <!-- Interactive Map Canvas Stage Card -->
-            <div class="cyber-card border border-slate-800/90 rounded-2xl shadow-2xl flex flex-col flex-1 min-h-[520px] overflow-hidden relative">
+            <div id="mapStage" class="cyber-card border border-slate-800/90 rounded-2xl shadow-2xl flex flex-col flex-1 min-h-[520px] overflow-hidden relative">
                 
                 <!-- Map Viewer Toolbar -->
                 <div class="px-5 py-3.5 border-b border-slate-800/90 flex flex-wrap items-center justify-between gap-3 bg-slate-950/60">
@@ -782,7 +828,7 @@
                             <i id="fullscreenIcon" class="fa-solid fa-expand text-xs"></i>
                         </button>
 
-                        <button type="button" onclick="downloadCurrentMap()" class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-md shadow-indigo-600/20 border border-white/10">
+                        <button type="button" onclick="downloadCurrentMap()" aria-label="Download PNG" class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold transition flex items-center gap-1.5 shadow-md shadow-indigo-600/20 border border-white/10">
                             <i class="fa-solid fa-download"></i>
                             <span class="hidden sm:inline">Download PNG</span>
                         </button>
@@ -887,7 +933,7 @@
                             <!-- Populated by JS -->
                         </div>
                         <div class="text-[11px] font-mono text-slate-400 bg-slate-900/90 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-800">
-                            Scroll to zoom &bull; Drag to pan
+                            <span class="hidden sm:inline">Scroll to zoom &bull; Drag to pan</span><span class="sm:hidden">Use + / − to zoom</span>
                         </div>
                     </div>
                 </div>

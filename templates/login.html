@@ -16,6 +16,13 @@
     input:focus-visible, button:focus-visible { outline: 3px solid #9fb8ff; outline-offset: 3px; }
     button { margin-top: 24px; cursor: pointer; border: 0; background: #8caaff; color: #0b1020; font-weight: 700; }
     .error { color: #ffb4b4; }
+    body { min-height: 100svh; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+    main { min-width: 0; overflow-wrap: anywhere; }
+    input { min-width: 0; }
+    button { min-height: 48px; touch-action: manipulation; }
+    @media (max-width: 390px) {
+      main { padding: 24px 20px; }
+    }
   </style>
 </head>
 <body>
