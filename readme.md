@@ -138,6 +138,12 @@ Choose a model, enter a topic, and select text or numeric mode and a map type. A
 
 Open **Theme & Style** from the left panel to choose a palette or edit category colors, numeric ranges, and label appearance. **Apply & Re-Paint Current Map** reuses the generated values, so changing colors does not require another AI call. Selecting a batch result restores its generation parameters before repainting it.
 
+The **Global label position** slider in the main left panel moves all country or
+continent labels horizontally, from −500 to +500 pixels. Negative values move
+left; positive values move right. The value is remembered in this browser. Use
+**Apply & Re-Paint Current Map**, next to the generation controls, to apply the
+shift without another AI request. The slider's **Reset** restores zero offset.
+
 The generated map's topic travels with its image into Video Studio and fills the
 video headline automatically. Batch selection and restored history use the topic
 of the selected map. Headlines you edit manually are kept when returning to the

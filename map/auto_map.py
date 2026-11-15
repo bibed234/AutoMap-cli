@@ -419,6 +419,12 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     except (ValueError, TypeError, OverflowError):
         label_stroke_width = 15
     label_auto_fit = bool(ls.get("auto_fit", False)) if "auto_fit" in ls else False
+    try:
+        raw_offset = ls.get('offset_x', 0)
+        offset = float(raw_offset) if not isinstance(raw_offset, bool) else 0
+        label_offset_x = max(-500, min(500, round(offset))) if math.isfinite(offset) else 0
+    except (TypeError, ValueError, OverflowError):
+        label_offset_x = 0
 
     # Most least and short form conflict solution
     # @TODO Make most/least and short form compatible
@@ -630,6 +636,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
 
         # The first fill seed also anchors the region's single label.
         x, y = points[0]
+        x += label_offset_x
 
         info = str(info)
 
@@ -703,6 +710,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
             "stroke_color": f"#{label_stroke_fill[0]:02x}{label_stroke_fill[1]:02x}{label_stroke_fill[2]:02x}",
             "stroke_width": label_stroke_width,
             "auto_fit": label_auto_fit,
+            "offset_x": label_offset_x,
             "recommended_font": font_name or ("Bips.ttf" if mode == "number" else "DIN Condensed.ttf"),
             "recommended_gsm": size_mod,
         },

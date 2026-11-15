@@ -382,3 +382,21 @@ def test_renderer_forwards_temperature_to_ai_but_repaint_does_not_call_ai(scene)
 
 
 
+
+
+@pytest.mark.parametrize('map_type', ['default', 'flag', 'world'])
+@pytest.mark.parametrize('offset', [-45, 45])
+def test_global_label_shift_moves_all_labels_but_not_country_fill_seeds(scene, monkeypatch, map_type, offset):
+    draw = Mock()
+    fill = Mock()
+    monkeypatch.setattr(ImageDraw.ImageDraw, 'text', draw)
+    monkeypatch.setattr(ImageDraw, 'floodfill', fill)
+    render(map_type=map_type, label_style={'offset_x': 0})
+    baseline = [call.args[0] for call in draw.call_args_list]
+    seeds = [call.kwargs['xy'] for call in fill.call_args_list]
+    draw.reset_mock()
+    fill.reset_mock()
+    output = render(map_type=map_type, label_style={'offset_x': offset})
+    assert [call.args[0] for call in draw.call_args_list] == [(x + offset, y) for x, y in baseline]
+    assert [call.kwargs['xy'] for call in fill.call_args_list] == seeds
+    assert output.map_meta['label_style']['offset_x'] == offset

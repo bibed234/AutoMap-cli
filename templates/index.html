@@ -649,11 +649,29 @@
                         </div>
                     </div>
 
+                    <div class="p-3 rounded-xl bg-slate-950/75 border border-slate-800">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <label for="labelOffsetX" class="text-xs font-semibold text-slate-200">Global label position</label>
+                            <output id="labelOffsetXValue" for="labelOffsetX" class="text-xs font-mono text-indigo-300">0 px</output>
+                        </div>
+                        <input id="labelOffsetX" type="range" min="-500" max="500" step="1" value="0" oninput="updateLabelOffset(this.value)" aria-describedby="labelOffsetXHint" class="w-full accent-indigo-400">
+                        <div class="flex justify-between text-[11px] text-slate-400"><span>← Left</span><button type="button" onclick="updateLabelOffset(0)" class="text-indigo-300 hover:text-indigo-100">Reset</button><span>Right →</span></div>
+                        <p id="labelOffsetXHint" class="text-[11px] text-slate-400 mt-2">Moves every country label horizontally. Click Re-Paint to apply without another AI request.</p>
+                    </div>
+
                     <!-- Submit / Generate Button -->
                     <button type="submit" id="generateBtn" class="relative w-full py-3.5 px-5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:via-indigo-400 hover:to-purple-500 text-white font-display font-semibold text-sm shadow-xl shadow-indigo-600/30 hover:shadow-indigo-500/45 border border-white/15 transition-all flex items-center justify-center gap-2.5 group overflow-hidden">
                         <i id="generateBtnIcon" class="fa-solid fa-play transition-transform group-hover:translate-x-0.5"></i>
                         <span id="generateBtnText">Run CLI &amp; Generate Map</span>
                     </button>
+                    <button type="button" id="restyleCurrentMapBtn" onclick="restyleCurrentMapFromStudio()" class="w-full justify-center px-3.5 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait">
+                        <i id="mapRepaintIcon" class="fa-solid fa-paintbrush" aria-hidden="true"></i>
+                        <span id="mapRepaintButtonLabel">Apply &amp; Re-Paint Current Map</span>
+                    </button>
+                <div id="mapRepaintStatus" role="status" aria-live="polite" class="hidden w-full text-xs text-emerald-300 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-notch animate-spin" aria-hidden="true"></i>
+                    <span>Re-painting map… Please wait while colors and labels are rendered.</span>
+                </div>
                     <p id="generationError" role="alert" class="hidden text-xs text-rose-300 bg-rose-950/50 border border-rose-500/30 rounded-xl p-3"></p>
                 </form>
             </div>
@@ -1105,19 +1123,11 @@
 
             <!-- Modal Footer -->
             <div class="px-6 py-3.5 border-t border-slate-800 bg-slate-950/80 flex flex-wrap items-center justify-between gap-2">
-                <div id="mapRepaintStatus" role="status" aria-live="polite" class="hidden w-full text-xs text-emerald-300 flex items-center gap-2">
-                    <i class="fa-solid fa-circle-notch animate-spin" aria-hidden="true"></i>
-                    <span>Re-painting map… Please wait while colors and labels are rendered.</span>
-                </div>
                 <button type="button" onclick="resetFillingDefaults()" class="text-xs text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
                     <i class="fa-solid fa-rotate-left"></i>
                     <span>Restore Default Palette</span>
                 </button>
                 <div class="flex items-center gap-2">
-                    <button type="button" id="restyleCurrentMapBtn" onclick="restyleCurrentMapFromStudio()" class="px-3.5 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait">
-                        <i id="mapRepaintIcon" class="fa-solid fa-paintbrush" aria-hidden="true"></i>
-                        <span id="mapRepaintButtonLabel">Apply &amp; Re-Paint Current Map</span>
-                    </button>
                     <button type="button" onclick="closeFillingStudio(true)" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">
                         Done &amp; Save Preview
                     </button>
@@ -1189,10 +1199,12 @@
         const providerKeys = {gemini: '', deepseek: ''};
         const MAP_TOPIC_STORAGE_KEY = 'automap-map-topic';
         const DEFAULT_AI_TEMPERATURE = 0.75;
+        const LABEL_OFFSET_STORAGE_KEY = 'automap-label-offset-x';
 
         // --- Initialize on Load ---
         window.addEventListener('DOMContentLoaded', () => {
             restoreSavedMapInputs();
+            try { updateLabelOffset(localStorage.getItem(LABEL_OFFSET_STORAGE_KEY) || 0, false); } catch {}
             updateAiTemperature(DEFAULT_AI_TEMPERATURE, false);
             try {
                 const saved = localStorage.getItem(AI_TEMPERATURE_STORAGE_KEY);
@@ -1760,7 +1772,7 @@
                 palette_theme,
                 // Automatic previews are not manual overrides for the next map.
                 ...(!auto_style ? { filling_txt, filling_num } : {}),
-                label_style: { ...labelStyleConfig }
+                label_style: { ...labelStyleConfig, offset_x: Number(document.getElementById('labelOffsetX').value) }
             };
         }
 
@@ -2166,6 +2178,15 @@
             document.getElementById('autoStyleFromMapToggle').checked = false;
         }
 
+        function updateLabelOffset(value, persist = true) {
+            const parsed = Number(value);
+            const offset = Number.isFinite(parsed) ? Math.max(-500, Math.min(500, Math.round(parsed))) : 0;
+            document.getElementById('labelOffsetX').value = offset;
+            document.getElementById('labelOffsetXValue').textContent = `${offset > 0 ? '+' : ''}${offset} px`;
+            labelStyleConfig.offset_x = offset;
+            if (persist) saveBrowserValue(LABEL_OFFSET_STORAGE_KEY, String(offset));
+        }
+
         function updateLabelStyleField(field, val) {
             if (field === 'stroke_width') {
                 labelStyleConfig.stroke_width = Math.max(2, Math.min(25, parseInt(val, 10) || 15));
@@ -2216,6 +2237,7 @@
                     ...labelStyleConfig,
                     ...analysis.label_style
                 };
+                if (analysis.label_style.offset_x !== undefined) updateLabelOffset(analysis.label_style.offset_x);
             }
 
             const statsBar = document.getElementById('detectedMapStatsBar');
@@ -2355,6 +2377,7 @@
             btn.disabled = busy || paletteAnalysisPending || !paletteAnalysisReady;
             btn.setAttribute('aria-busy', String(busy));
             document.getElementById('fillingPaletteTheme').disabled = busy;
+            document.getElementById('labelOffsetX').disabled = busy;
             document.getElementById('openFillingStudioBtn').disabled = busy;
             document.getElementById('mapRepaintButtonLabel').textContent = busy
                 ? 'Re-painting…' : 'Apply & Re-Paint Current Map';
@@ -2487,6 +2510,7 @@
                     stroke_color: labelStyleConfig.stroke_color,
                     stroke_width: labelStyleConfig.stroke_width,
                     auto_fit: labelStyleConfig.auto_fit,
+                    offset_x: Number(document.getElementById('labelOffsetX').value),
                     recommended_font: labelStyleConfig.recommended_font
                 }
             };
@@ -2677,6 +2701,7 @@
             if (!item) return;
 
             const s = item.state;
+            updateLabelOffset(s.label_style?.offset_x ?? 0);
             changeAiProvider(s.provider || modelProvider(s.model), s.model);
             const modeRadio = document.querySelector(`input[name="mode"][value="${s.mode}"]`);
             if (modeRadio) modeRadio.checked = true;
@@ -2737,6 +2762,7 @@
 
         // --- Reset Form ---
         function resetForm() {
+            updateLabelOffset(0);
             updateAiTemperature(DEFAULT_AI_TEMPERATURE);
             document.querySelector('input[name="mode"][value="text"]').checked = true;
             document.querySelector('input[name="map_type"][value="default"]').checked = true;

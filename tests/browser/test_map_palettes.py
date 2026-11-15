@@ -78,6 +78,7 @@ def test_auto_preview_is_not_reused_as_manual_generation_rules(map_page):
         route.fulfill(status=500, json={'status': 'error', 'error': 'Stop after inspecting payload'})
 
     page.route('**/api/restyle_map', repaint)
+    page.evaluate('closeFillingStudio()')
     page.click('#restyleCurrentMapBtn')
     page.wait_for_function("!document.getElementById('restyleCurrentMapBtn').disabled")
     assert len(payloads) == 1
@@ -157,6 +158,7 @@ def test_repaint_shows_busy_state_until_image_or_error_is_ready(map_page, status
     page = map_page
     pending = []
     page.route('**/api/restyle_map', lambda route: pending.append(route))
+    page.evaluate('closeFillingStudio()')
     page.click('#restyleCurrentMapBtn')
     page.wait_for_function('mapRepaintPending')
     assert page.locator('#mapRepaintStatus').is_visible()
@@ -515,3 +517,35 @@ def test_history_uses_model_provider_and_its_saved_key(map_page):
     assert page.evaluate('getFormState().provider') == 'deepseek'
     assert page.locator('#apiKeyInput').input_value() == 'deepseek-history-key'
     assert page.locator('#modelSelect').input_value() == 'deepseek-flash'
+
+
+def test_label_shift_and_repaint_are_accessible_next_to_generate_without_ai(map_page):
+    page = map_page
+    page.evaluate('closeFillingStudio()')
+    assert page.locator('#cliForm #restyleCurrentMapBtn').count() == 1
+    assert page.locator('#fillingStudioModal #restyleCurrentMapBtn').count() == 0
+    assert page.locator('#restyleCurrentMapBtn').is_visible()
+    payloads = []
+    ai_calls = []
+    page.on('request', lambda request: ai_calls.append(request.url) if '/api/generate' in request.url else None)
+    png = io.BytesIO()
+    Image.new('RGB', (2, 2), 'green').save(png, format='PNG')
+    image_url = 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode('ascii')
+    def repaint(route):
+        payloads.append(route.request.post_data_json)
+        route.fulfill(json={'status': 'success', 'image_url': image_url})
+    page.route('**/api/restyle_map', repaint)
+    for key, offset in [('End', 500), ('Home', -500)]:
+        page.locator('#labelOffsetX').press(key)
+        assert page.evaluate('getFormState().label_style.offset_x') == offset
+        assert page.locator('#labelOffsetXValue').inner_text() == f'{offset:+d} px'
+        page.click('#restyleCurrentMapBtn')
+        page.wait_for_function('!mapRepaintPending')
+        assert payloads[-1]['label_style']['offset_x'] == offset
+        assert payloads[-1]['map_values'] == VALUES
+    assert not ai_calls
+    page.reload()
+    assert page.locator('#labelOffsetX').input_value() == '-500'
+    page.add_style_tag(content='.hidden {display:none!important}')
+    page.locator('button[onclick="updateLabelOffset(0)"]').click()
+    assert page.evaluate('getFormState().label_style.offset_x') == 0
