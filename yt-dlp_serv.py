@@ -240,7 +240,6 @@ def music_download():
         cookie_args = ["--cookies", cookie_path]
     command = [
         "yt-dlp",
-        "--js-runtimes", "node",
         "--remote-components", "ejs:github",
         *cookie_args,
         "-f", "ba[ext=m4a]/ba",
