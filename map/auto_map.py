@@ -21,6 +21,7 @@ import tempfile
 import threading
 import math
 import re
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -169,6 +170,95 @@ _WORLD_LABEL_SIZES: dict[str, int] = {
     "south_america": 100,
     "north_america": 120,
 }
+
+# Map types whose regions are painted from the cached region-ID map.
+# Flag-filled maps (``flag``, ``world_countries``) keep their underlying flag artwork.
+_PAINTED_MAP_TYPES: frozenset[str] = frozenset({"default", "world"})
+
+# Smallest base label size (before the global size modifier) still drawn on the
+# world countries map; smaller countries stay unlabeled to keep the map readable.
+_WORLD_COUNTRIES_MIN_LABEL = 1
+
+# Common alternative AI spellings mapped to canonical snake_case country keys.
+# Applied only when the alias target exists in the coordinates dictionary.
+_WORLD_COUNTRY_ALIASES: dict[str, tuple[str, ...]] = {
+    "usa": ("united_states", "united_states_of_america"),
+    "us": ("united_states", "united_states_of_america"),
+    "united_states_of_america": ("united_states",),
+    "america": ("united_states", "united_states_of_america"),
+    "uk": ("united_kingdom",),
+    "great_britain": ("united_kingdom",),
+    "britain": ("united_kingdom",),
+    "russian_federation": ("russia",),
+    "czech_republic": ("czechia",),
+    "turkiye": ("turkey",),
+    "ivory_coast": ("cote_d_ivoire", "cote_divoire"),
+    "cote_d_ivoire": ("ivory_coast",),
+    "cote_divoire": ("ivory_coast", "cote_d_ivoire"),
+    "drc": ("democratic_republic_of_the_congo", "dr_congo"),
+    "dr_congo": ("democratic_republic_of_the_congo",),
+    "congo_kinshasa": ("democratic_republic_of_the_congo", "dr_congo"),
+    "democratic_republic_of_congo": ("democratic_republic_of_the_congo", "dr_congo"),
+    "congo_brazzaville": ("republic_of_the_congo", "congo"),
+    "republic_of_congo": ("republic_of_the_congo", "congo"),
+    "south_korea": ("korea_south", "republic_of_korea"),
+    "korea": ("south_korea",),
+    "korea_south": ("south_korea",),
+    "republic_of_korea": ("south_korea",),
+    "north_korea": ("korea_north", "dprk"),
+    "korea_north": ("north_korea",),
+    "dprk": ("north_korea",),
+    "burma": ("myanmar",),
+    "swaziland": ("eswatini",),
+    "eswatini": ("swaziland",),
+    "macedonia": ("north_macedonia",),
+    "holland": ("netherlands",),
+    "the_netherlands": ("netherlands",),
+    "uae": ("united_arab_emirates",),
+    "east_timor": ("timor_leste",),
+    "timor_leste": ("east_timor",),
+    "cabo_verde": ("cape_verde",),
+    "cape_verde": ("cabo_verde",),
+    "vatican_city": ("vatican",),
+    "bosnia": ("bosnia_and_herzegovina",),
+    "the_gambia": ("gambia",),
+    "the_bahamas": ("bahamas",),
+    "united_republic_of_tanzania": ("tanzania",),
+    "republic_of_serbia": ("serbia",),
+    "state_of_palestine": ("palestine",),
+    "brunei_darussalam": ("brunei",),
+    "viet_nam": ("vietnam",),
+    "lao_pdr": ("laos",),
+}
+
+
+def _country_key(name: object) -> str:
+    """Normalize a country name to snake_case ASCII ("Côte d'Ivoire" -> "cote_d_ivoire")."""
+    text = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _world_countries_answer_norm(ai_answer: dict[str, object], keys: object) -> dict[str, object]:
+    """Index AI answers by normalized country key, resolving common aliases."""
+    norm: dict[str, object] = {}
+    for k, v in (ai_answer or {}).items():
+        norm.setdefault(_country_key(k), v)
+    known = {_country_key(k) for k in keys}
+    for alias, targets in _WORLD_COUNTRY_ALIASES.items():
+        if alias not in norm:
+            continue
+        for target in targets:
+            if target in known and target not in norm:
+                norm[target] = norm[alias]
+                break
+    return norm
+
+
+def _load_world_countries() -> tuple[dict[str, list[tuple[int, int]]], dict[str, int]]:
+    """Import world-countries seed points and label sizes on first use."""
+    from .world_countries_coords import world_countries_coords, world_countries_label_sizes
+
+    return world_countries_coords, world_countries_label_sizes
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +636,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
 
     CLI options:
       mode             -- "text" or "number"
-      map_type         -- "default", "flag" or "world"
+      map_type         -- "default", "flag", "world" or "world_countries"
       size_mod         -- global font size modifier (default 15)
       optional_feature -- None, "show_most_least" or "short_form"
       model            -- Gemini model id
@@ -626,6 +716,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     })
 
     # map selecting
+    wc_label_sizes: dict[str, int] = {}
     if map_type == "default":
         path = Path(__file__).parent.parent / "./resources/maps/default_map.png"
         dict_ = europe_coords
@@ -635,6 +726,9 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     elif map_type == 'world':
         path = Path(__file__).parent.parent / "./resources/maps/world_map.png"
         dict_ = world_coords
+    elif map_type == 'world_countries':
+        path = Path(__file__).parent.parent / "./resources/maps/world_countries_map.png"
+        dict_, wc_label_sizes = _load_world_countries()
     else:
         showerror("Error", f"Unknown map type: {map_type}")
         return
@@ -709,11 +803,25 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
         most_country, least_country = extrema
         log.info(f"Most: {most_country} | Least: {least_country}")
 
-        ml_draw.text((106, 1240),
-                     f'Most: {most_country.capitalize()}\nLeast: {least_country.capitalize()}',
-                     font=get_font(150),
+        if map_type == "world_countries":
+            ml_xy = (int(img.size[0] * 0.025), int(img.size[1] * 0.80))
+            ml_size = max(20, int(img.size[1] * 0.036))
+            ml_stroke = min(label_stroke_width, max(2, ml_size // 5)) if label_stroke_width > 0 else 0
+            ml_text = (
+                f"Most: {most_country.replace('_', ' ').title()}\n"
+                f"Least: {least_country.replace('_', ' ').title()}"
+            )
+        else:
+            ml_xy = (106, 1240)
+            ml_size = 150
+            ml_stroke = label_stroke_width
+            ml_text = f'Most: {most_country.capitalize()}\nLeast: {least_country.capitalize()}'
+
+        ml_draw.text(ml_xy,
+                     ml_text,
+                     font=get_font(ml_size),
                      fill=label_fill,
-                     stroke_width=label_stroke_width,
+                     stroke_width=ml_stroke,
                      stroke_fill=label_stroke_fill)
 
     total = len(dict_)
@@ -721,17 +829,24 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     used_txt_rules: dict[str, tuple[int, int, int, int]] = {}
     used_num_rules: dict[tuple[float, float], tuple[int, int, int, int]] = {}
 
-    ai_answer_norm = {
-        str(k).strip().lower().replace(" ", "_").replace("-", "_"): v
-        for k, v in (ai_answer or {}).items()
-    }
-    if "oceania" in ai_answer_norm and "australia" not in ai_answer_norm:
-        ai_answer_norm["australia"] = ai_answer_norm["oceania"]
+    if map_type == "world_countries":
+        ai_answer_norm = _world_countries_answer_norm(ai_answer or {}, dict_.keys())
+    else:
+        ai_answer_norm = {
+            str(k).strip().lower().replace(" ", "_").replace("-", "_"): v
+            for k, v in (ai_answer or {}).items()
+        }
+        if "oceania" in ai_answer_norm and "australia" not in ai_answer_norm:
+            ai_answer_norm["australia"] = ai_answer_norm["oceania"]
 
     region_colors: dict[int, tuple[int, int, int, int]] = {}
 
     for index, (name, points) in enumerate(dict_.items(), start=1):
-        name_key = str(name).strip().lower().replace(" ", "_").replace("-", "_")
+        name_key = (
+            _country_key(name)
+            if map_type == "world_countries"
+            else str(name).strip().lower().replace(" ", "_").replace("-", "_")
+        )
         '''Number mode'''
         if mode == 'number':
             try:
@@ -776,7 +891,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
                 # so "Yes", "yes" and " yes " all find the same colour.
                 color = filling_txt_ci[info.lower()]
             except KeyError:
-                if map_type == 'default' or map_type == 'world':
+                if map_type in _PAINTED_MAP_TYPES:
                     log.info(f"No filling color for '{info}'; using random")
                     # Repeated answers share a color so categories remain recognizable.
                     try:
@@ -796,8 +911,11 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
         # Flag maps retain their original artwork. Other maps use every seed point
         # to fill disconnected pieces of a region, such as islands.
         # Painting is applied after the loop from a cached region-ID map.
-        if map_type == 'default' or map_type == 'world':
+        if map_type in _PAINTED_MAP_TYPES:
             region_colors[index] = tuple(int(c) for c in color)
+
+        if not points:
+            continue
 
         # The first fill seed also anchors the region's single label.
         x, y = points[0]
@@ -850,6 +968,25 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
                       stroke_width=label_stroke_width,
                       stroke_fill=label_stroke_fill)
 
+        elif map_type == 'world_countries':
+            base_size = wc_label_sizes.get(name)
+            if base_size is None:
+                base_size = wc_label_sizes.get(name_key, 0)
+            if base_size and base_size >= _WORLD_COUNTRIES_MIN_LABEL:
+                size = base_size
+                if label_auto_fit and len(info) >= 6:
+                    size = max(14, int(size * max(0.55, 5.0 / len(info))))
+                size = max(12, size + size_mod)
+                # Cap outline thickness for compact country labels so strokes stay legible.
+                stroke_w = min(label_stroke_width, max(2, size // 5)) if label_stroke_width > 0 else 0
+                draw.text((x, y),
+                          info,
+                          font=get_font(size),
+                          fill=label_fill,
+                          stroke_width=stroke_w,
+                          stroke_fill=label_stroke_fill,
+                          anchor="mm")
+
     effective_txt = dict(used_txt_rules) if used_txt_rules else dict(filling_txt or auto_txt)
     seen_txt_lower = {str(uk).strip().lower() for uk in effective_txt}
     for k, v in (filling_txt or {}).items():
@@ -881,39 +1018,33 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
         },
     }
 
-    if map_type == 'default' or map_type == 'world':
+    if map_type in _PAINTED_MAP_TYPES:
         flat, ids = _region_index(path, img, dict_)
         img = _paint_regions(img, flat, ids, region_colors)
 
     # adding relief map
     log.step("Compositing layers")
-    if map_type in ['default', 'flag']:
+    _layer_assets = {
+        "default": ("map_relief.png", "default_map_blured.png"),
+        "flag": ("map_relief.png", "default_map_blured.png"),
+        "world": ("world_map_relief.png", "world_map_blured.png"),
+        "world_countries": ("world_map_relief.png", "world_countries_map_blured.png"),
+    }
+    if map_type in _layer_assets:
+        relief_name, borders_name = _layer_assets[map_type]
         log.info("Adding relief + borders overlay")
         # Relief is resized and its opacity reduced once per process.
-        relief = _prepared_relief(Path(__file__).parent.parent / "./resources/maps/map_relief.png", img.size)
-
+        maps_dir = Path(__file__).parent.parent / "resources" / "maps"
+        relief = _prepared_relief(maps_dir / relief_name, img.size)
         result = Image.alpha_composite(img, relief)
 
         # Restore borders above the relief, then put readable labels on top.
-        borders = _load_rgba(Path(__file__).parent.parent / "./resources/maps/default_map_blured.png")
-
+        borders = _load_rgba(maps_dir / borders_name)
         result = Image.alpha_composite(result, borders)
         result = Image.alpha_composite(result, text_layer)
 
         if optional_feature == "show_most_least" and map_type != "world" and most_least is not None:
             result = Image.alpha_composite(result, most_least)
-
-    # merging layers
-    elif map_type == 'world':
-        log.info("Adding world relief + borders overlay")
-        relief = _prepared_relief(Path(__file__).parent.parent / "./resources/maps/world_map_relief.png", img.size)
-
-        result = Image.alpha_composite(img, relief)
-
-        borders = _load_rgba(Path(__file__).parent.parent / "./resources/maps/world_map_blured.png")
-
-        result = Image.alpha_composite(result, borders)
-        result = Image.alpha_composite(result, text_layer)
     else:
         result = Image.alpha_composite(img, text_layer)
 
