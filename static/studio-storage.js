@@ -26,6 +26,7 @@ window.StudioStorage = (() => {
                 const record = request.result;
                 resolve(record ? {
                     updatedAt: record.updatedAt,
+                    topic: typeof record.topic === 'string' ? record.topic : '',
                     file: record.blob ? new File([record.blob], record.name, {
                         type: record.type, lastModified: record.lastModified,
                     }) : null,
@@ -35,11 +36,12 @@ window.StudioStorage = (() => {
         });
     }
 
-    async function setAsset(key, file) {
+    async function setAsset(key, file, metadata = {}) {
         const db = await open();
         const record = {
             blob: file, name: file?.name, type: file?.type,
             lastModified: file?.lastModified, updatedAt: Date.now(),
+            topic: typeof metadata.topic === 'string' ? metadata.topic.trim().slice(0, 1000) : '',
         };
         return new Promise((resolve, reject) => {
             const transaction = db.transaction('assets', 'readwrite');

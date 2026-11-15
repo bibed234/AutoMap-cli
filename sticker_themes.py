@@ -9,6 +9,9 @@ ALLOWED_STICKERS: tuple[str, ...] = (
     'bear', 'paw', 'tree', 'wolf',
     'beer', 'coffee', 'wine', 'pizza',
     'soccer', 'car', 'brain', 'book', 'sun',
+    'mountain', 'volcano', 'island', 'rainbow', 'moon', 'rain',
+    'robot', 'satellite', 'laptop', 'graduation', 'medal',
+    'cat', 'dog', 'fish', 'burger', 'train',
 )
 
 TWEMOJI_CODEPOINTS: dict[str, str] = {
@@ -46,6 +49,10 @@ TWEMOJI_CODEPOINTS: dict[str, str] = {
     'brain': '1f9e0',
     'book': '1f4da',
     'sun': '2600',
+    'mountain': '26f0', 'volcano': '1f30b', 'island': '1f3dd', 'rainbow': '1f308',
+    'moon': '1f319', 'rain': '1f327', 'robot': '1f916', 'satellite': '1f6f0',
+    'laptop': '1f4bb', 'graduation': '1f393', 'medal': '1f3c5', 'cat': '1f431',
+    'dog': '1f436', 'fish': '1f41f', 'burger': '1f354', 'train': '1f686',
 }
 
 AUTO_STICKER_THEMES: tuple[tuple[tuple[str, ...], tuple[str, str]], ...] = (

@@ -1507,11 +1507,11 @@
             }
         }
 
-        async function syncLatestMapToStudioStorage(imageUrl) {
+        async function syncLatestMapToStudioStorage(imageUrl, topic = '') {
             if (!imageUrl || typeof StudioStorage === 'undefined' || !StudioStorage.setAsset) return;
             try {
                 const blob = await (await fetch(imageUrl)).blob();
-                await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', { type: 'image/png' }));
+                await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', { type: 'image/png' }), {topic});
             } catch (_) {
                 // Ignore storage quota or fetch errors during preview sync
             }
@@ -1600,7 +1600,7 @@
             if (item.analysis) {
                 applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
             }
-            syncLatestMapToStudioStorage(item.image_url);
+            syncLatestMapToStudioStorage(item.image_url, item.prompt);
             showToast(`Viewing #${item.index}: ${item.prompt}`, 'info');
         }
 
@@ -2018,7 +2018,7 @@
                     });
                     try {
                         const blob = await (await fetch(result.image_url)).blob();
-                        await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}));
+                        await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}), {topic: state.topic});
                         showToast("Map generated & auto-styled! Ready in Video Studio.", "success");
                     } catch (error) {
                         showToast("Map generated, but automatic transfer could not be saved. Download it to use in Video Studio.", "warn");
@@ -2401,7 +2401,7 @@
                 logToConsole('[Auto-Style] Re-painted active map with updated Color Filling Studio rules & typography style.', 'success');
                 try {
                     const blob = await (await fetch(data.image_url)).blob();
-                    await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}));
+                    await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}), {topic: state.topic});
                 } catch {
                     logToConsole('[Storage] Map was re-painted, but could not be saved for Video Studio.', 'warn');
                 }
@@ -2703,7 +2703,7 @@
                 if (item.analysis) {
                     applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
                 }
-                syncLatestMapToStudioStorage(item.image_url);
+                syncLatestMapToStudioStorage(item.image_url, s.topic);
             }
 
             updateCommandPreview();

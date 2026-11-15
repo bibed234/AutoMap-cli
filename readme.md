@@ -138,6 +138,11 @@ Choose a model, enter a topic, and select text or numeric mode and a map type. A
 
 Open **Theme & Style** from the left panel to choose a palette or edit category colors, numeric ranges, and label appearance. **Apply & Re-Paint Current Map** reuses the generated values, so changing colors does not require another AI call. Selecting a batch result restores its generation parameters before repainting it.
 
+The generated map's topic travels with its image into Video Studio and fills the
+video headline automatically. Batch selection and restored history use the topic
+of the selected map. Headlines you edit manually are kept when returning to the
+studio or selecting another generated map.
+
 The temperature slider accepts `0`–`2` and defaults to `0.75` in the web UI. It controls sampling where the selected model supports it; it does not ensure factual accuracy, and some models manage sampling themselves.
 
 The browser remembers API keys, the last topic, and palette preferences. Video Studio also stores selected materials and settings locally. Storage limits or disabled storage can prevent persistence; download important outputs rather than treating browser storage as an archive.
@@ -153,6 +158,12 @@ The browser remembers API keys, the last topic, and palette preferences. Video S
 The worker renders a **1080 × 1920** portrait frame. Video duration is limited to **1–30 seconds** and to the available source media. Without selected music, rendering can proceed without audio; background footage's original audio is removed.
 
 The CPU encoder is `libx264`. NVIDIA `h264_nvenc` and macOS `h264_videotoolbox` are selectable only when detected by the worker. Installing an encoder does not guarantee compatible hardware or drivers.
+
+During rendering, a progress bar shows the worker's audio/video encoding progress
+and current phase. It reaches 100% only after the finished MP4 is ready. The
+sticker library also includes mountains, volcanoes, islands, weather, robots,
+satellites, laptops, graduation caps, medals, cats, dogs, fish, burgers, and trains;
+these have offline artwork as well as the existing sticker styles.
 
 Maps, background footage, audio, and custom overlay materials have a **10 MiB per-material limit**. URL downloads are also rejected if the resulting MP3 exceeds that limit. A long track may therefore need to be replaced with a shorter source. Each audio download has a unique identifier, independent of its display title.
 

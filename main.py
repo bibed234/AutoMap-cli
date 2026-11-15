@@ -1076,6 +1076,7 @@ def make_video() -> tuple[object, int]:
                 "subscribe_text": data.get('subscribe_text', 'Subscribe!'),
                 "subscribe_delay": data.get('subscribe_delay', 2.5),
                 "intro_fade": data.get('intro_fade', False),
+                **({'render_id': data['render_id']} if data.get('render_id') is not None else {}),
             },
             # Video rendering (moviepy/ffmpeg) can take a while - allow more time.
             timeout=300,
@@ -1093,6 +1094,22 @@ def make_video() -> tuple[object, int]:
 
     # Pass the downstream payload/status straight through.
     return jsonify(payload), response.status_code
+
+
+@app.get('/api/render_progress/<uuid:render_id>')
+def video_render_progress(render_id):
+    try:
+        response = requests.get(f'{WORKER_URL}/api/render_progress/{render_id}', timeout=5)
+    except requests.RequestException:
+        return jsonify(error='Render progress is temporarily unavailable.'), 502
+    try:
+        result = jsonify(response.json())
+        result.headers['Cache-Control'] = 'no-store'
+        return result, response.status_code
+    except ValueError:
+        return jsonify(error='Render service returned invalid progress.'), 502
+    finally:
+        response.close()
 
 
 @app.route('/api/download_video', methods=['GET'])

@@ -646,9 +646,10 @@
                             <span class="eq-bar w-1.5 h-3.5 rounded-full bg-rose-400"></span>
                         </div>
 
-                        <!-- Progress shimmer bar -->
-                        <div class="w-64 h-1.5 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
-                            <div class="timeline-scanner w-1/2 h-full bg-gradient-to-r from-transparent via-indigo-400 to-transparent"></div>
+                        <div class="w-full max-w-md space-y-2">
+                            <div class="flex justify-between text-xs text-indigo-200"><span id="renderProgressPhase">Preparing materials</span><span id="renderProgressPercent">0%</span></div>
+                            <progress id="renderProgressBar" max="100" value="0" aria-label="Video render progress" class="w-full h-3 accent-indigo-500"></progress>
+                            <p id="renderProgressHint" class="text-xs text-slate-400" role="status">Progress will update when the worker starts encoding.</p>
                         </div>
                     </div>
 
@@ -904,6 +905,24 @@
                                                     <option value="soccer">⚽ Football / Sports</option>
                                                     <option value="car">🚗 Car / Transport</option>
                                                 </optgroup>
+                                                <optgroup label="More Nature, Science &amp; Lifestyle">
+                                                    <option value="mountain">🏔️ Mountain</option>
+                                                    <option value="volcano">🌋 Volcano</option>
+                                                    <option value="island">🏝️ Island</option>
+                                                    <option value="rainbow">🌈 Rainbow</option>
+                                                    <option value="moon">🌙 Moon</option>
+                                                    <option value="rain">🌧️ Rain</option>
+                                                    <option value="robot">🤖 Robot</option>
+                                                    <option value="satellite">🛰️ Satellite</option>
+                                                    <option value="laptop">💻 Laptop</option>
+                                                    <option value="graduation">🎓 Graduation</option>
+                                                    <option value="medal">🏅 Medal</option>
+                                                    <option value="cat">🐱 Cat</option>
+                                                    <option value="dog">🐶 Dog</option>
+                                                    <option value="fish">🐟 Fish</option>
+                                                    <option value="burger">🍔 Burger</option>
+                                                    <option value="train">🚆 Train</option>
+                                                </optgroup>
                                             </select>
                                         </label>
                                         <input id="leftStickerImageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="selectLeftStickerImage(this.files[0])" class="hidden">
@@ -976,6 +995,24 @@
                                                     <option value="book">📚 Books / Language</option>
                                                     <option value="soccer">⚽ Football / Sports</option>
                                                     <option value="car">🚗 Car / Transport</option>
+                                                </optgroup>
+                                                <optgroup label="More Nature, Science &amp; Lifestyle">
+                                                    <option value="mountain">🏔️ Mountain</option>
+                                                    <option value="volcano">🌋 Volcano</option>
+                                                    <option value="island">🏝️ Island</option>
+                                                    <option value="rainbow">🌈 Rainbow</option>
+                                                    <option value="moon">🌙 Moon</option>
+                                                    <option value="rain">🌧️ Rain</option>
+                                                    <option value="robot">🤖 Robot</option>
+                                                    <option value="satellite">🛰️ Satellite</option>
+                                                    <option value="laptop">💻 Laptop</option>
+                                                    <option value="graduation">🎓 Graduation</option>
+                                                    <option value="medal">🏅 Medal</option>
+                                                    <option value="cat">🐱 Cat</option>
+                                                    <option value="dog">🐶 Dog</option>
+                                                    <option value="fish">🐟 Fish</option>
+                                                    <option value="burger">🍔 Burger</option>
+                                                    <option value="train">🚆 Train</option>
                                                 </optgroup>
                                             </select>
                                         </label>
@@ -1252,6 +1289,7 @@
             'subscribeTextInput', 'subscribeDelayInput', 'watermarkTextInput',
             'watermarkFontSelect', 'watermarkColor', 'watermarkStarsToggle', 'codecSelect'];
         let videoSettingsReady = false;
+        let manualVideoTitle = false;
         const materialVersions = {mapFileInput: 0, bgFileInput: 0};
         let pendingAssetSaves = Promise.resolve();
 
@@ -1261,6 +1299,7 @@
                 const input = document.getElementById(id);
                 return [id, input.type === 'checkbox' ? input.checked : input.value];
             }));
+            values.manualVideoTitle = manualVideoTitle;
             try {
                 localStorage.setItem(VIDEO_SETTINGS_KEY, JSON.stringify(values));
             } catch (error) {
@@ -1268,9 +1307,9 @@
             }
         }
 
-        function rememberVideoAsset(key, file) {
+        function rememberVideoAsset(key, file, metadata = {}) {
             // Serialize writes so a removal cannot be overtaken by an earlier upload.
-            pendingAssetSaves = pendingAssetSaves.then(() => StudioStorage.setAsset(key, file)).catch(() => {
+            pendingAssetSaves = pendingAssetSaves.then(() => StudioStorage.setAsset(key, file, metadata)).catch(() => {
                 document.getElementById('studioSaveStatus').textContent = 'Some files could not be saved. You can still render this video.';
             });
             return pendingAssetSaves;
@@ -1280,6 +1319,9 @@
             try {
                 const saved = JSON.parse(localStorage.getItem(VIDEO_SETTINGS_KEY) || '{}');
                 if (saved && typeof saved === 'object') {
+                    // Older saved titles were entered manually before topic transfer existed.
+                    manualVideoTitle = typeof saved.manualVideoTitle === 'boolean'
+                        ? saved.manualVideoTitle : !!saved.videoTitleInput;
                     VIDEO_SETTING_IDS.forEach(id => {
                         const input = document.getElementById(id);
                         const value = saved[id];
@@ -1327,7 +1369,13 @@
                 if (map?.file && materialVersions.mapFileInput === 0) {
                     const file = map === latest ? await prepareGeneratedMap(map.file) : map.file;
                     if (materialVersions.mapFileInput === 0) {
-                        acceptFile('mapFileInput', file, map === latest);
+                        acceptFile('mapFileInput', file, map === latest, map.topic);
+                        if (renderFiles.mapFileInput === file && !manualVideoTitle && typeof map.topic === 'string' && map.topic.trim()) {
+                            const title = document.getElementById('videoTitleInput');
+                            title.value = map.topic.trim().slice(0, title.maxLength);
+                            updateStageTitlePreview(title.value);
+                            saveVideoSettings();
+                        }
                     }
                 }
                 if (background?.file && materialVersions.bgFileInput === 0) {
@@ -2094,38 +2142,55 @@
             brain: '🧠 Brain',
             book: '📚 Book',
             sun: '☀️ Sun',
+            mountain: '🏔️ Mountain',
+            volcano: '🌋 Volcano',
+            island: '🏝️ Island',
+            rainbow: '🌈 Rainbow',
+            moon: '🌙 Moon',
+            rain: '🌧️ Rain',
+            robot: '🤖 Robot',
+            satellite: '🛰️ Satellite',
+            laptop: '💻 Laptop',
+            graduation: '🎓 Graduation',
+            medal: '🏅 Medal',
+            cat: '🐱 Cat',
+            dog: '🐶 Dog',
+            fish: '🐟 Fish',
+            burger: '🍔 Burger',
+            train: '🚆 Train',
+
         };
 
         const AUTO_STICKER_THEME_VARIANTS = [
             {
                 name: 'Wildlife & Nature',
                 keywords: ['bear', 'bears', 'grizzly', 'panda', 'wolf', 'wolves', 'fox', 'deer', 'moose', 'boar', 'lion', 'tiger', 'dog', 'dogs', 'cat', 'cats', 'pet', 'pets', 'animal', 'animals', 'wildlife', 'wild', 'forest', 'tree', 'trees', 'woods', 'nature', 'park', 'hunt', 'bird', 'fish', 'shark', 'snake', 'horse', 'cow'],
-                left: ['auto', 'bear', 'paw', 'tree', 'wolf'],
-                right: ['auto', 'tree', 'paw', 'bear', 'wolf'],
+                left: ['auto', 'bear', 'paw', 'tree', 'wolf', 'cat', 'dog', 'fish'],
+                right: ['auto', 'tree', 'paw', 'bear', 'wolf', 'cat', 'dog', 'fish'],
             },
             {
                 name: 'Food, Drinks & Lifestyle',
                 keywords: ['beer', 'beers', 'wine', 'alcohol', 'vodka', 'whiskey', 'drink', 'drinks', 'pub', 'bar', 'coffee', 'tea', 'cafe', 'pizza', 'burger', 'food', 'cuisine', 'cheese', 'meat', 'bread', 'milk', 'water'],
-                left: ['auto', 'beer', 'coffee', 'wine', 'pizza'],
-                right: ['auto', 'coffee', 'beer', 'pizza', 'wine'],
+                left: ['auto', 'beer', 'coffee', 'wine', 'pizza', 'burger'],
+                right: ['auto', 'coffee', 'beer', 'pizza', 'wine', 'burger'],
             },
             {
                 name: 'People, IQ & Education',
                 keywords: ['iq', 'smart', 'intelligent', 'brain', 'genius', 'education', 'school', 'university', 'student', 'literacy', 'book', 'books', 'read', 'language', 'languages', 'speak', 'word', 'words', 'alphabet', 'name', 'names', 'population', 'people', 'human'],
-                left: ['auto', 'brain', 'book', 'crown', 'star'],
-                right: ['auto', 'book', 'brain', 'trophy', 'globe'],
+                left: ['auto', 'brain', 'book', 'crown', 'star', 'graduation', 'laptop'],
+                right: ['auto', 'book', 'brain', 'trophy', 'globe', 'graduation', 'laptop'],
             },
             {
                 name: 'Cars, Transport & Energy',
                 keywords: ['car', 'cars', 'auto', 'vehicle', 'drive', 'driving', 'highway', 'road', 'roads', 'train', 'rail', 'railway', 'metro', 'bus', 'traffic', 'fuel', 'gas', 'petrol', 'oil', 'tesla', 'bmw'],
-                left: ['auto', 'car', 'bolt', 'compass', 'fire'],
-                right: ['auto', 'bolt', 'car', 'pin', 'globe'],
+                left: ['auto', 'car', 'bolt', 'compass', 'fire', 'train'],
+                right: ['auto', 'bolt', 'car', 'pin', 'globe', 'train'],
             },
             {
                 name: 'Sports, Football & Games',
                 keywords: ['sport', 'sports', 'football', 'soccer', 'fifa', 'uefa', 'world cup', 'basketball', 'hockey', 'tennis', 'olympic', 'olympics', 'medal', 'athlete', 'gym', 'game', 'games', 'chess'],
-                left: ['auto', 'soccer', 'trophy', 'fire', 'crown'],
-                right: ['auto', 'trophy', 'soccer', 'star', 'fire'],
+                left: ['auto', 'soccer', 'trophy', 'fire', 'crown', 'medal'],
+                right: ['auto', 'trophy', 'soccer', 'star', 'fire', 'medal'],
             },
             {
                 name: 'Cold, Ice & Winter Weather',
@@ -2365,6 +2430,7 @@
             const titleEl = document.getElementById('videoTitleInput');
             if (!titleEl.value.trim()) {
                 titleEl.value = 'When is Saint Nicholas\nDay in your country?';
+                manualVideoTitle = true;
             }
             const wmEl = document.getElementById('watermarkTextInput');
             if (!wmEl.value.trim()) {
@@ -3109,7 +3175,7 @@
             }
         }
 
-        function acceptFile(inputId, file, persist = true) {
+        function acceptFile(inputId, file, persist = true, topic = '') {
             materialVersions[inputId]++;
             // Size guard: reject material files larger than 10 MB.
             if (file.size > MAX_MATERIAL_BYTES) {
@@ -3138,7 +3204,7 @@
 
             // Update live Cinema Stage preview
             updateCinemaStagePreview(inputId, file);
-            if (persist) rememberVideoAsset(inputId === 'mapFileInput' ? 'video-map' : 'video-background', file);
+            if (persist) rememberVideoAsset(inputId === 'mapFileInput' ? 'video-map' : 'video-background', file, {topic});
 
             logToConsole(`[File] Selected ${file.name} (${humanSize(file.size)})`, 'info');
         }
@@ -3224,6 +3290,42 @@
             });
         }
 
+        function setRenderProgress(progress, phase) {
+            const value = Math.max(0, Math.min(100, Number(progress) || 0));
+            document.getElementById('renderProgressBar').value = value;
+            document.getElementById('renderProgressPercent').textContent = `${Math.round(value)}%`;
+            document.getElementById('renderProgressPhase').textContent = phase;
+        }
+
+        function startRenderProgress(renderId) {
+            let stopped = false;
+            let timer;
+            let controller;
+            const poll = async () => {
+                controller = new AbortController();
+                const deadline = setTimeout(() => controller.abort(), 6000);
+                try {
+                    const response = await fetch(`/api/render_progress/${renderId}`, {signal: controller.signal, cache: 'no-store'});
+                    if (stopped) return;
+                    if (response.ok) {
+                        const status = await response.json();
+                        if (stopped) return;
+                        setRenderProgress(status.progress, status.phase || 'Rendering');
+                        document.getElementById('renderProgressHint').textContent = status.error || 'Progress is reported by the render worker.';
+                    } else if (response.status !== 404) {
+                        document.getElementById('renderProgressHint').textContent = 'Progress connection interrupted. Rendering may still be running.';
+                    }
+                } catch {
+                    if (!stopped) document.getElementById('renderProgressHint').textContent = 'Reconnecting to render progress…';
+                } finally {
+                    clearTimeout(deadline);
+                    if (!stopped) timer = setTimeout(poll, 750);
+                }
+            };
+            timer = setTimeout(poll, 250);
+            return () => { stopped = true; clearTimeout(timer); controller?.abort(); };
+        }
+
         async function handleRenderVideo(e) {
             e.preventDefault();
             const btn = document.getElementById('renderBtn');
@@ -3269,6 +3371,12 @@
             btnIcon.className = "fa-solid fa-circle-notch animate-spin";
             overlay.classList.remove('hidden');
             metaBadge.textContent = "Rendering...";
+            setRenderProgress(0, 'Preparing materials');
+            document.getElementById('renderProgressHint').textContent = 'Preparing and uploading selected materials…';
+            const renderId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID()
+                : Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
+                    .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+            let stopProgress = () => {};
 
             logToConsole(`[Render] POST /api/render_video title="${title}" codec=${codec} duration=${durationSecs}s map=${mapFile.name} bg=${bgFile.name}`, 'cmd');
 
@@ -3313,6 +3421,8 @@
                     top_right_sticker_image: rightStickerImageB64,
                 };
 
+                payload.render_id = renderId;
+                stopProgress = startRenderProgress(renderId);
                 const response = await fetch('/api/render_video', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -3331,6 +3441,8 @@
                     throw new Error(result.error || 'Video render failed');
                 }
 
+                stopProgress();
+                setRenderProgress(100, 'Complete');
                 renderResultData = result;
                 const filePath = result.file_path || result.path || result.file || '(unknown path)';
 
@@ -3362,6 +3474,7 @@
                 showToast(error.message || "Video render failed. Check console logs.", 'error');
                 metaBadge.textContent = "Error";
             } finally {
+                stopProgress();
                 overlay.classList.add('hidden');
                 btn.disabled = false;
                 btn.classList.remove('opacity-70');
@@ -3398,6 +3511,7 @@
             window.videoStudioReady = restoreVideoStudio();
             loadCodecs();
             ['input', 'change'].forEach(name => document.addEventListener(name, event => {
+                if (event.target.id === 'videoTitleInput') manualVideoTitle = true;
                 if (VIDEO_SETTING_IDS.includes(event.target.id)) saveVideoSettings();
             }));
             const stage = document.querySelector('.video-preview-stage');
