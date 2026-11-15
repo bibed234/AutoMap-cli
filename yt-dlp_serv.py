@@ -241,6 +241,7 @@ def music_download():
     command = [
         "yt-dlp",
         "--js-runtimes", "node",
+        "--remote-components", "ejs:github",
         *cookie_args,
         "-f", "ba[ext=m4a]/ba",
         "-x",
