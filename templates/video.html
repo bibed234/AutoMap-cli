@@ -2346,7 +2346,12 @@
             if (!box || box.classList.contains('hidden')) return;
             const title = document.getElementById('videoTitleInput').value.trim();
             const theme = detectTitleStickerVariants(title);
-            document.getElementById('autoStickerThemeLabel').textContent = `Theme: ${theme.name} — library & generated variants`;
+            let mapTheme = '';
+            try {
+                mapTheme = localStorage.getItem('automap-generated-map-theme') || localStorage.getItem('automap-map-palette-theme') || '';
+            } catch {}
+            const mapThemeSuffix = mapTheme && mapTheme !== 'auto' ? ` (Map: ${mapTheme})` : '';
+            document.getElementById('autoStickerThemeLabel').textContent = `Theme: ${theme.name}${mapThemeSuffix} — library & generated variants`;
 
             const leftSelect = document.getElementById('topLeftStickerSelect');
             const rightSelect = document.getElementById('topRightStickerSelect');
