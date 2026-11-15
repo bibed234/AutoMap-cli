@@ -19,6 +19,7 @@ render_progress = RenderProgress()
 
 @app.get('/api/render_progress/<uuid:render_id>')
 def get_render_progress(render_id):
+    """Return current progress for ``render_id`` with ``no-store`` so polling never reads stale cache."""
     result = render_progress.snapshot(str(render_id))
     response = jsonify(result if result else {'error': 'Render not found.'})
     response.headers['Cache-Control'] = 'no-store'
@@ -587,6 +588,7 @@ def _resolve_auto_stickers(title: str) -> tuple[str, str]:
         return ('globe', 'pin')
     best_pair: tuple[str, str] | None = None
     best_count = 0
+    # Score each theme by distinct keyword hits; ties keep the earlier (higher-priority) theme.
     for keywords, pair in _AUTO_STICKER_THEMES:
         count = 0
         for kw in keywords:
