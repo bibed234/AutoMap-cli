@@ -13,13 +13,18 @@
 # limitations under the License.
 
 import ast
+import hashlib
+import os
 import random
 import io
+import tempfile
+import threading
 import math
 import re
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .constants import europe_coords, world_coords
@@ -164,6 +169,172 @@ _WORLD_LABEL_SIZES: dict[str, int] = {
     "south_america": 100,
     "north_america": 120,
 }
+
+
+# ---------------------------------------------------------------------------
+# Per-process caches for decoded artwork, prepared overlays and region-ID maps.
+# Cached images are shared; callers must copy them before mutating.
+# ---------------------------------------------------------------------------
+
+_REGION_CACHE_VERSION = 1
+_CACHE_LOCK = threading.Lock()
+_IMAGE_CACHE: dict[tuple, Image.Image] = {}
+_RELIEF_CACHE: dict[tuple, Image.Image] = {}
+_REGION_CACHE: dict[tuple, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _file_key(path: Path) -> tuple | None:
+    """Identity of an artwork file; None when it cannot be stat'ed (no caching)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (str(Path(path).resolve()), st.st_mtime_ns, st.st_size)
+
+
+def _load_rgba(path: Path) -> Image.Image:
+    """Decode ``path`` as RGBA once per process. Returned image is shared: copy before mutating."""
+    key = _file_key(path)
+    if key is not None:
+        with _CACHE_LOCK:
+            cached = _IMAGE_CACHE.get(key)
+        if cached is not None:
+            return cached
+    img = Image.open(path).convert("RGBA")
+    if key is not None:
+        img.load()
+        with _CACHE_LOCK:
+            _IMAGE_CACHE[key] = img
+    return img
+
+
+def _prepared_relief(path: Path, size: tuple[int, int]) -> Image.Image:
+    """Relief overlay resized to ``size`` with reduced opacity (shared, do not mutate)."""
+    key = _file_key(path)
+    ckey = None if key is None else (key, tuple(size))
+    if ckey is not None:
+        with _CACHE_LOCK:
+            cached = _RELIEF_CACHE.get(ckey)
+        if cached is not None:
+            return cached
+    relief = _load_rgba(path)
+    relief = relief.resize(size) if relief.size != tuple(size) else relief.copy()
+    _, _, _, a = relief.split()
+    relief.putalpha(a.point(_RELIEF_ALPHA_LUT))
+    if ckey is not None:
+        with _CACHE_LOCK:
+            _RELIEF_CACHE[ckey] = relief
+    return relief
+
+
+def _region_thresh(name: str) -> int:
+    # Tolerances are tuned to the shading in the source map images.
+    if name == "south_america":
+        return 15
+    if name == "asia":
+        return 20
+    return 30
+
+
+def _region_cache_dir() -> Path:
+    env = os.environ.get("AUTOMAP_REGION_CACHE_DIR")
+    return Path(env) if env else Path(tempfile.gettempdir()) / "automap-region-cache"
+
+
+def _compute_region_ids(base: Image.Image, coords: dict) -> np.ndarray:
+    """Flood fill every seed once, on a scratch copy, with a unique sentinel per region.
+
+    Fills run in the same order and with the same tolerances as the original
+    per-render flood fill. Sentinels use alpha 128 so they differ by more than
+    any tolerance from both opaque and transparent artwork, which keeps
+    already-claimed regions acting as boundaries for later fills.
+    Returns an array of region indices (1-based, 0 = unpainted).
+    """
+    work = base.copy()
+    for idx, (name, points) in enumerate(coords.items(), start=1):
+        sentinel = (idx & 0xFF, (idx >> 8) & 0xFF, 77, 128)
+        thresh = _region_thresh(name)
+        for coord in points:
+            ImageDraw.floodfill(work, xy=coord, value=sentinel, thresh=thresh)
+    orig = np.asarray(base)
+    new = np.asarray(work)
+    changed = np.any(orig != new, axis=2)
+    ids = new[..., 0].astype(np.uint16) | (new[..., 1].astype(np.uint16) << 8)
+    ids[~changed] = 0
+    return ids
+
+
+def _region_index(map_path: Path, base: Image.Image, coords: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return (flat pixel indices, region ids) for every pixel belonging to a region.
+
+    Cached in memory per (artwork file, seeds) and on disk keyed by a hash of the
+    decoded pixels, seeds, and tolerances, so artwork or seed edits regenerate it.
+    """
+    seeds = tuple((str(n), _region_thresh(n), tuple(tuple(map(int, c)) for c in pts))
+                  for n, pts in coords.items())
+    fkey = _file_key(map_path)
+    mkey = None if fkey is None else (fkey, base.size, seeds)
+    if mkey is not None:
+        with _CACHE_LOCK:
+            hit = _REGION_CACHE.get(mkey)
+        if hit is not None:
+            return hit
+
+    disk_path = None
+    if mkey is not None:
+        h = hashlib.sha256()
+        h.update(f"v{_REGION_CACHE_VERSION}|{base.size}|{seeds!r}|".encode())
+        h.update(base.tobytes())
+        disk_path = _region_cache_dir() / f"{h.hexdigest()}.npz"
+        try:
+            with np.load(disk_path) as data:
+                result = (data["flat"], data["ids"])
+            log.info("Loaded cached region map")
+        except (OSError, KeyError, ValueError):
+            result = None
+        if result is not None:
+            with _CACHE_LOCK:
+                _REGION_CACHE[mkey] = result
+            return result
+
+    log.info("Building region map (one-time per base map)")
+    ids = _compute_region_ids(base, coords).ravel()
+    flat = np.flatnonzero(ids)
+    id_dtype = np.uint8 if len(coords) < 256 else np.uint16
+    result = (flat.astype(np.uint32), ids[flat].astype(id_dtype))
+
+    if mkey is not None:
+        with _CACHE_LOCK:
+            _REGION_CACHE[mkey] = result
+        try:
+            disk_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=disk_path.parent, suffix=".npz.tmp")
+            with os.fdopen(fd, "wb") as fh:
+                np.savez(fh, flat=result[0], ids=result[1])
+            os.replace(tmp, disk_path)
+        except OSError:
+            pass
+    return result
+
+
+def _paint_regions(img: Image.Image, flat: np.ndarray, ids: np.ndarray,
+                   colors: dict[int, tuple[int, int, int, int]]) -> Image.Image:
+    """Return a copy of ``img`` with region ``i`` painted ``colors[i]``."""
+    if not colors:
+        return img.copy()
+    n = int(max(colors)) + 1
+    if ids.size:
+        n = max(n, int(ids.max()) + 1)
+    lut = np.zeros((n, 4), dtype=np.uint8)
+    use = np.zeros(n, dtype=bool)
+    for i, c in colors.items():
+        lut[i] = c
+        use[i] = True
+    arr = np.array(img, dtype=np.uint8)
+    pix = arr.reshape(-1, 4)
+    sel = use[ids]
+    pix[flat[sel]] = lut[ids[sel]]
+    return Image.fromarray(arr)
 
 
 def _resolve_theme_name(palette_theme: str = "auto", prompt: str = "", mode: str = "text") -> str:
@@ -470,7 +641,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
 
     # opening selected map
     log.step(f"Loading base map: {path.name}")
-    img = Image.open(path).convert("RGBA")
+    img = _load_rgba(path)  # shared cached copy; never mutated in place
     log.info(f"Base map size: {img.size[0]}x{img.size[1]}")
 
     # Keep labels separate so later flood fills and overlays cannot paint over them.
@@ -557,6 +728,8 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     if "oceania" in ai_answer_norm and "australia" not in ai_answer_norm:
         ai_answer_norm["australia"] = ai_answer_norm["oceania"]
 
+    region_colors: dict[int, tuple[int, int, int, int]] = {}
+
     for index, (name, points) in enumerate(dict_.items(), start=1):
         name_key = str(name).strip().lower().replace(" ", "_").replace("-", "_")
         '''Number mode'''
@@ -622,17 +795,9 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
 
         # Flag maps retain their original artwork. Other maps use every seed point
         # to fill disconnected pieces of a region, such as islands.
+        # Painting is applied after the loop from a cached region-ID map.
         if map_type == 'default' or map_type == 'world':
-            for coord in points:
-                # Tolerances are tuned to the shading in the source map images.
-                if name == "south_america":
-                    thresh = 15
-                elif name == "asia":
-                    thresh = 20
-                else:
-                    thresh = 30
-
-                ImageDraw.floodfill(img, xy=coord, value=color, thresh=thresh)
+            region_colors[index] = tuple(int(c) for c in color)
 
         # The first fill seed also anchors the region's single label.
         x, y = points[0]
@@ -716,23 +881,21 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
         },
     }
 
+    if map_type == 'default' or map_type == 'world':
+        flat, ids = _region_index(path, img, dict_)
+        img = _paint_regions(img, flat, ids, region_colors)
+
     # adding relief map
     log.step("Compositing layers")
     if map_type in ['default', 'flag']:
         log.info("Adding relief + borders overlay")
-        relief = Image.open(Path(__file__).parent.parent / "./resources/maps/map_relief.png").convert("RGBA")
-        relief = relief.resize(img.size)
-
-        # Reduce relief opacity to preserve the generated region colors beneath it.
-        _, _, _, a = relief.split()
-        relief.putalpha(a.point(_RELIEF_ALPHA_LUT))
+        # Relief is resized and its opacity reduced once per process.
+        relief = _prepared_relief(Path(__file__).parent.parent / "./resources/maps/map_relief.png", img.size)
 
         result = Image.alpha_composite(img, relief)
 
         # Restore borders above the relief, then put readable labels on top.
-        borders = Image.open(
-            Path(__file__).parent.parent / "./resources/maps/default_map_blured.png"
-        ).convert("RGBA")
+        borders = _load_rgba(Path(__file__).parent.parent / "./resources/maps/default_map_blured.png")
 
         result = Image.alpha_composite(result, borders)
         result = Image.alpha_composite(result, text_layer)
@@ -743,17 +906,11 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     # merging layers
     elif map_type == 'world':
         log.info("Adding world relief + borders overlay")
-        relief = Image.open(Path(__file__).parent.parent / "./resources/maps/world_map_relief.png").convert("RGBA")
-        if relief.size != img.size:
-            relief = relief.resize(img.size)
-
-        # Reduce relief opacity to preserve the generated region colors beneath it.
-        _, _, _, a = relief.split()
-        relief.putalpha(a.point(_RELIEF_ALPHA_LUT))
+        relief = _prepared_relief(Path(__file__).parent.parent / "./resources/maps/world_map_relief.png", img.size)
 
         result = Image.alpha_composite(img, relief)
 
-        borders = Image.open(Path(__file__).parent.parent / "./resources/maps/world_map_blured.png").convert("RGBA")
+        borders = _load_rgba(Path(__file__).parent.parent / "./resources/maps/world_map_blured.png")
 
         result = Image.alpha_composite(result, borders)
         result = Image.alpha_composite(result, text_layer)

@@ -1,0 +1,91 @@
+"""Benchmark (and optionally compare) map generation with a fixed fake AI response.
+
+Usage:
+    python tools/bench_map.py [--runs N] [--compare OLD_AUTO_MAP_PY]
+
+--compare loads another version of map/auto_map.py (e.g. from
+``git show <rev>:map/auto_map.py > /tmp/old_auto_map.py``) and reports the
+number of differing pixels between its output and the current one.
+"""
+import argparse
+import importlib.util
+import io
+import random
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from PIL import Image  # noqa: E402
+
+from map import auto_map as current  # noqa: E402
+from map.constants import europe_coords, world_coords  # noqa: E402
+
+FONT = "Bips.ttf"
+
+
+def fake_answer(coords, mode):
+    names = list(coords)
+    if mode == "number":
+        return {n: str((i * 37) % 900 + 5) for i, n in enumerate(names)}
+    return {n: ("Yes", "No", "Tea", "Maybe")[i % 4] for i, n in enumerate(names)}
+
+
+CASES = [
+    ("default", "text", europe_coords),
+    ("default", "number", europe_coords),
+    ("world", "text", world_coords),
+    ("flag", "text", europe_coords),
+]
+
+
+def run(mod, map_type, mode, coords):
+    random.seed(1234)
+    buf = mod.auto_map("bench", mode, map_type, 0, None, "fake", FONT,
+                       show_result=False, io_res=True,
+                       ai_answer_override=fake_answer(coords, mode))
+    return buf
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--compare")
+    args = ap.parse_args()
+    current.log.set_verbose(False)
+
+    mods = {"current": current}
+    if args.compare:
+        spec = importlib.util.spec_from_file_location("map._old_auto_map", args.compare)
+        old = importlib.util.module_from_spec(spec)
+        old.__package__ = "map"
+        spec.loader.exec_module(old)
+        old.__file__ = current.__file__
+        old.FONTS_DIR = current.FONTS_DIR
+        mods = {"old": old, "current": current}
+
+    outputs = {}
+    for label, mod in mods.items():
+        for map_type, mode, coords in CASES:
+            times = []
+            for _ in range(args.runs):
+                t = time.perf_counter()
+                buf = run(mod, map_type, mode, coords)
+                times.append(time.perf_counter() - t)
+            outputs[(label, map_type, mode)] = buf.getvalue()
+            first, warm = times[0], (min(times[1:]) if len(times) > 1 else float("nan"))
+            print(f"{label:8} {map_type:8} {mode:7} first={first:6.2f}s warm(min)={warm:6.2f}s", flush=True)
+
+    if args.compare:
+        import numpy as np
+        for map_type, mode, _ in CASES:
+            a = np.asarray(Image.open(io.BytesIO(outputs[("old", map_type, mode)])).convert("RGBA"))
+            b = np.asarray(Image.open(io.BytesIO(outputs[("current", map_type, mode)])).convert("RGBA"))
+            diff = int(np.any(a != b, axis=2).sum())
+            print(f"diff {map_type:8} {mode:7} differing_pixels={diff} of {a.shape[0] * a.shape[1]}")
+
+
+if __name__ == "__main__":
+    main()
