@@ -31,10 +31,12 @@ def provider_for_model(model):
 
 
 def provider_key_name(provider):
+    """Return the environment/settings key name for the given AI provider."""
     return 'DEEPSEEK_API_KEY' if provider == 'deepseek' else 'GEMINI_API_KEY'
 
 
 def configured_api_key(provider, settings=None):
+    """Return the configured API key for ``provider``, ignoring empty or ``your_*`` placeholders."""
     name = provider_key_name(provider)
     value = (os.environ.get(name) or (settings or {}).get(name) or '').strip()
     return value if value and not value.lower().startswith('your_') else None
@@ -88,6 +90,7 @@ def _deepseek_json(path, api_key, *, payload=None, timeout=45):
 
 
 def list_deepseek_models(api_key):
+    """Return sorted ``deepseek-*`` model IDs available for ``api_key``."""
     result = _deepseek_json('models', api_key, timeout=15)
     models = result.get('data')
     if not isinstance(models, list):
@@ -130,6 +133,7 @@ def _web_search_ddg(query, max_results=5):
 
 
 def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_search=False, max_search_requests=5):
+    """Send a chat-completion request to DeepSeek, optionally running a bounded web_search tool loop."""
     sys_msg = 'Return only a JSON object mapping region names to values. Example: {"ukraine": 42}.'
     if web_search:
         sys_msg += ' You have access to the web_search tool—use it to look up accurate, up-to-date facts and statistics before answering.'
@@ -352,6 +356,11 @@ def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None
 
 
 def load_filling():
+    """Load text and numeric color-filling rules from ``filling.json`` (or ``filling.template.json``).
+
+    Returns ``(filling_txt, filling_num)`` where ``filling_txt`` maps label strings
+    to RGBA tuples and ``filling_num`` maps ``(low, high)`` numeric bounds to RGBA tuples.
+    """
 
     path = Path(__file__).parent / "filling.json"
     if not path.is_file():

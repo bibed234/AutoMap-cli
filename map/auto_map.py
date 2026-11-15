@@ -228,6 +228,7 @@ def _prepared_relief(path: Path, size: tuple[int, int]) -> Image.Image:
 
 
 def _region_thresh(name: str) -> int:
+    """Return the flood-fill color tolerance for a region."""
     # Tolerances are tuned to the shading in the source map images.
     if name == "south_america":
         return 15
@@ -237,6 +238,7 @@ def _region_thresh(name: str) -> int:
 
 
 def _region_cache_dir() -> Path:
+    """Return the directory used to cache precomputed region-ID maps on disk."""
     env = os.environ.get("AUTOMAP_REGION_CACHE_DIR")
     return Path(env) if env else Path(tempfile.gettempdir()) / "automap-region-cache"
 
@@ -338,6 +340,7 @@ def _paint_regions(img: Image.Image, flat: np.ndarray, ids: np.ndarray,
 
 
 def _resolve_theme_name(palette_theme: str = "auto", prompt: str = "", mode: str = "text") -> str:
+    """Pick a palette theme name from an explicit choice, prompt keywords, or mode."""
     theme = (palette_theme or "auto").strip().lower()
     if theme in _PALETTE_THEMES and theme != "auto":
         return theme
@@ -354,6 +357,7 @@ def _resolve_theme_name(palette_theme: str = "auto", prompt: str = "", mode: str
 
 
 def _hex_to_rgba(val: object, default: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """Parse a ``#RRGGBB`` hex string into an opaque RGBA tuple, or return ``default``."""
     if not isinstance(val, str):
         return default
     clean = val.strip().lstrip("#")
@@ -363,6 +367,7 @@ def _hex_to_rgba(val: object, default: tuple[int, int, int, int]) -> tuple[int, 
 
 
 def _to_rgba_tuple(val: object) -> tuple[int, int, int, int] | None:
+    """Coerce an RGB/RGBA sequence or ``#RRGGBB`` hex string into a clamped RGBA tuple."""
     if isinstance(val, (list, tuple)) and len(val) in (3, 4):
         try:
             r, g, b = int(val[0]), int(val[1]), int(val[2])
@@ -379,6 +384,7 @@ def _parse_filling_overrides(
     raw_txt: object,
     raw_num: object,
 ) -> tuple[dict[str, tuple[int, int, int, int]], dict[tuple[float, float], tuple[int, int, int, int]]]:
+    """Normalize optional text and numeric filling overrides into RGBA lookup dicts."""
     txt_out: dict[str, tuple[int, int, int, int]] = {}
     num_out: dict[tuple[float, float], tuple[int, int, int, int]] = {}
 
