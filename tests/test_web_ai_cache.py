@@ -67,6 +67,22 @@ def test_cache_never_stores_api_key_and_expires(monkeypatch):
     assert cache.get(key) is None
 
 
+def test_search_settings_bypass_cache_but_visual_changes_reuse_it(monkeypatch):
+    render = Mock(side_effect=lambda **kw: _buffer({'france': 1}))
+    monkeypatch.setattr(web, 'auto_map', render)
+    client = web.app.test_client()
+    for settings in (
+        {'web_search': False},
+        {'web_search': True, 'max_search_requests': 3},
+        {'web_search': True, 'max_search_requests': 7},
+        {'web_search': True, 'max_search_requests': 7, 'palette_theme': 'forest'},
+    ):
+        response = client.post('/api/generate', json=_body(**settings))
+        assert response.status_code == 200
+    assert all('ai_answer_override' not in call.kwargs for call in render.call_args_list[:3])
+    assert render.call_args_list[3].kwargs['ai_answer_override'] == {'france': 1}
+
+
 def test_render_video_accepts_binary_multipart(monkeypatch):
     upstream = Mock(status_code=200)
     upstream.json.return_value = {'status': 'success'}

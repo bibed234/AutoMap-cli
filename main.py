@@ -145,6 +145,7 @@ def request_too_large(error):
 
 @app.route('/')
 def main():
+    """Serve the main single-page map generator UI."""
     return render_template("index.html")
 
 
@@ -156,6 +157,7 @@ def studio():
 
 @app.route('/api/video_title_preview', methods=['POST'])
 def video_title_preview():
+    """Proxy title/watermark/sticker preview requests to the yt-dlp render worker."""
 
     data = request.get_json(silent=True) or {}
     allowed_keys = (
@@ -226,10 +228,12 @@ def api_status():
 
 
 def _server_api_key(provider):
+    """Return the server-configured API key for ``provider``, if any."""
     return configured_api_key(provider, dotenv_values(env) if env.is_file() else {})
 
 
 def _request_provider(data):
+    """Resolve and validate the AI provider from ``provider`` or ``model``."""
     inferred = provider_for_model(data.get('model') or '')
     provider = data.get('provider') or inferred
     if provider not in ('gemini', 'deepseek'):
@@ -240,6 +244,7 @@ def _request_provider(data):
 
 
 def _request_api_key(data, provider):
+    """Resolve the API key for ``provider`` from server config or the request payload."""
     supplied = str(data.get('api_key') or '').strip() or None
     if provider == 'deepseek':
         resolved = _server_api_key(provider) or supplied
@@ -256,6 +261,7 @@ _TRUTHY = {'1', 'true', 'yes', 'on'}
 
 
 def _wants_refresh(data) -> bool:
+    """Return True if the request asks to bypass the AI response cache."""
     value = data.get('refresh_ai', data.get('refresh', False))
     return value is True or str(value).strip().lower() in _TRUTHY
 
@@ -281,6 +287,8 @@ def _auto_map_with_ai_cache(*, refresh: bool, provider: str, api_key, **kwargs):
         provider=provider,
         temperature=temperature,
         short_form=kwargs.get('optional_feature') == 'short_form',
+        web_search=bool(kwargs.get('web_search', False)),
+        max_search_requests=kwargs.get('max_search_requests', 5),
     )
     cached = None if refresh else ai_cache.get(cache_key)
     if cached is not None:
@@ -599,6 +607,7 @@ def generate():
             io_res=True,
             api_key=api_key,
             **temperature_options,
+            **({"web_search": True, "max_search_requests": max(1, min(10, int(data.get("max_search_requests") or 5)))} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
             **style_kwargs,
         )
     except AIServiceError as error:
@@ -702,6 +711,83 @@ def download_batch_template():
     )
 
 
+@app.route('/api/download_batch_zip', methods=['POST'])
+def download_batch_zip():
+    """Bundle generated batch maps into a single ZIP archive named by topic."""
+    import zipfile
+
+    data = request.get_json(silent=True) or {}
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return jsonify({"status": "error", "error": "No maps provided."}), 400
+
+    buf = io.BytesIO()
+    used_names: set[str] = set()
+    added = 0
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            image_url = str(item.get("image_url") or "").strip()
+            prompt = str(item.get("prompt") or "").strip()
+            if not image_url.startswith('data:image/png;base64,'):
+                continue
+            try:
+                image_bytes = base64.b64decode(image_url.split(',', 1)[1], validate=True)
+                with Image.open(io.BytesIO(image_bytes)) as image:
+                    if image.format != 'PNG':
+                        continue
+                    image.verify()
+            except (ValueError, OSError):
+                continue
+
+            base = re.sub(r"[^\w\-]+", "_", prompt.strip().replace(" ", "_")).strip("_") if prompt else f"map_{idx:02d}"
+            if not base:
+                base = f"map_{idx:02d}"
+            count = 1
+            arc_name = f"{base}.png"
+            while arc_name in used_names:
+                count += 1
+                arc_name = f"{base}_{count}.png"
+            used_names.add(arc_name)
+            zf.writestr(arc_name, image_bytes)
+            added += 1
+
+    if added == 0:
+        return jsonify({"status": "error", "error": "No valid map files found to archive."}), 404
+
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="automap_batch.zip",
+    )
+
+
+@app.route('/api/parse_batch_csv', methods=['POST'])
+def parse_batch_csv():
+    """Parse an uploaded .csv ideas file and return the normalized idea rows."""
+    if request.files and "file" in request.files:
+        uploaded = request.files["file"]
+        filename = uploaded.filename or ""
+        ideas_text = uploaded.read().decode("utf-8", errors="replace")
+    else:
+        data = request.get_json(silent=True) or {}
+        filename = str(data.get("filename") or "")
+        ideas_text = str(data.get("ideas_text") or "")
+
+    try:
+        ideas = parse_ideas_content(ideas_text, filename=filename)
+    except ValueError as err:
+        return jsonify({"status": "error", "error": str(err)}), 400
+
+    if not ideas:
+        return jsonify({"status": "error", "error": "No valid map ideas found in the uploaded file."}), 400
+
+    return jsonify({"status": "success", "ideas": ideas, "total": len(ideas)})
+
+
 @app.route('/api/generate_batch/', methods=['POST'])
 @app.route('/api/generate_batch', methods=['POST'])
 def generate_batch():
@@ -802,6 +888,7 @@ def generate_batch():
                 io_res=True,
                 api_key=item_api_key,
                 **temperature_options,
+                **({"web_search": True, "max_search_requests": max(1, min(10, int(data.get("max_search_requests") or 5)))} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
                 **item_style_kwargs,
             )
         except Exception as err:  # noqa: BLE001

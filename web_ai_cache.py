@@ -1,7 +1,7 @@
 """In-memory cache of AI map data so visual-only changes skip the AI request.
 
 Entries are keyed by a SHA-256 digest of the request-affecting inputs
-(prompt, map type, model, provider, temperature, short-form flag) plus a
+(prompt, map type, model, provider, temperature, short-form flag, search settings) plus a
 per-user scope. The scope is derived from the web session identity and a
 *hash* of any user-supplied API key; the key itself is never stored.
 Only the parsed AI answer (region -> value) is kept as cache content.
@@ -25,6 +25,8 @@ def _env_int(name: str, default: int) -> int:
 
 
 class AIResponseCache:
+    """Thread-safe LRU + TTL cache for parsed AI map responses."""
+
     def __init__(self, ttl_seconds: int = 3600, max_entries: int = 256):
         self.ttl = ttl_seconds
         self.max_entries = max_entries
@@ -33,19 +35,23 @@ class AIResponseCache:
 
     @property
     def enabled(self) -> bool:
+        """Return True when both TTL and capacity are positive."""
         return self.ttl > 0 and self.max_entries > 0
 
     @staticmethod
     def scope(identity: str | None, api_key: str | None) -> str:
+        """Derive a per-user/per-key cache namespace without storing the raw key."""
         key_part = hashlib.sha256(api_key.encode()).hexdigest() if api_key else ''
         return hashlib.sha256(f"{identity or ''}\0{key_part}".encode()).hexdigest()
 
     @staticmethod
     def make_key(scope: str, **fields: object) -> str:
+        """Hash the cache scope and sorted request fields into a lookup key."""
         blob = json.dumps(fields, sort_keys=True, default=str, ensure_ascii=False)
         return hashlib.sha256(f"{scope}\0{blob}".encode()).hexdigest()
 
     def get(self, key: str) -> dict | None:
+        """Return a shallow copy of a non-expired cached dict, or None on miss."""
         if not self.enabled:
             return None
         with self._lock:
@@ -60,6 +66,7 @@ class AIResponseCache:
             return dict(value)
 
     def put(self, key: str, value: dict) -> None:
+        """Store a non-empty dict in the cache and evict the oldest entry if full."""
         if not self.enabled or not isinstance(value, dict) or not value:
             return
         with self._lock:
@@ -69,6 +76,7 @@ class AIResponseCache:
                 self._data.popitem(last=False)
 
     def clear(self) -> None:
+        """Remove all cached entries."""
         with self._lock:
             self._data.clear()
 

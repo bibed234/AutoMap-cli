@@ -1,5 +1,6 @@
 """English-only sticker catalog and keyword dictionary for automatic video sticker selection."""
 
+# Valid sticker identifiers accepted by the API; 'none' and 'auto' are control modes.
 ALLOWED_STICKERS: tuple[str, ...] = (
     'none', 'auto', 'santa', 'gift', 'snowflake', 'pumpkin',
     'globe', 'compass', 'pin', 'plane',
@@ -14,6 +15,7 @@ ALLOWED_STICKERS: tuple[str, ...] = (
     'cat', 'dog', 'fish', 'burger', 'train',
 )
 
+# Mapping from sticker name to lowercase hex Twemoji codepoint for SVG/PNG asset lookup.
 TWEMOJI_CODEPOINTS: dict[str, str] = {
     'santa': '1f385',
     'gift': '1f381',
@@ -55,6 +57,8 @@ TWEMOJI_CODEPOINTS: dict[str, str] = {
     'dog': '1f436', 'fish': '1f41f', 'burger': '1f354', 'train': '1f686',
 }
 
+# Ordered priority rules: ((keywords...), (left_sticker, right_sticker)).
+# First matching theme wins when resolving 'auto' stickers from a video title.
 AUTO_STICKER_THEMES: tuple[tuple[tuple[str, ...], tuple[str, str]], ...] = (
     (
         (
@@ -188,6 +192,8 @@ AUTO_STICKER_THEMES: tuple[tuple[tuple[str, ...], tuple[str, str]], ...] = (
     ),
 )
 
+# Short keywords that must match whole words only (e.g. 'ai', 'car', 'top')
+# to avoid false substring matches inside unrelated words.
 EXACT_WORD_KEYWORDS: set[str] = {
     'ai', 'gdp', 'nato', 'top', 'iq', 'car', 'sun', 'pet', 'dog', 'cat',
     'bar', 'pub', 'tea', 'oil', 'gas', 'bus', 'gym', 'ice', 'hot', 'god',

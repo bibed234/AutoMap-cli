@@ -60,6 +60,7 @@ window.StudioStorage = (() => {
 
     const HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000;
 
+    /* Run a read/write history transaction, pruning entries older than 24 hours. */
     async function historyTransaction(action) {
         const db = await open();
         return new Promise((resolve, reject) => {

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Command-line interface (`automap make` and `automap batch`) for AutoMap."""
+
 import os
 from pathlib import Path
 

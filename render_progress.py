@@ -9,16 +9,20 @@ from proglog import ProgressBarLogger
 
 
 class RenderProgress:
+    """Thread-safe in-memory store for tracking active and recent video renders."""
+
     def __init__(self):
         self.records = {}
         self.lock = Lock()
 
     def update(self, render_id, *, progress=None, phase=None, status=None, error=None):
+        """Update fields for an existing render record; ignores unknown IDs."""
         with self.lock:
             record = self.records.get(render_id)
             if record is None:
                 return
             if progress is not None:
+                # Clamp to [0, 100] and never regress progress on out-of-order callbacks.
                 record['progress'] = max(record['progress'], min(100, progress))
             for key, value in (('phase', phase), ('status', status), ('error', error)):
                 if value is not None:
@@ -26,11 +30,13 @@ class RenderProgress:
             record['updated_at'] = monotonic()
 
     def snapshot(self, render_id):
+        """Return a copy of the public progress fields for ``render_id``, or ``None``."""
         with self.lock:
             record = self.records.get(render_id)
             return {key: value for key, value in record.items() if key != 'updated_at'} if record else None
 
     def track(self, function):
+        """Flask route decorator that registers, tracks, and finalizes a ``render_id``."""
         @wraps(function)
         def tracked(*args, **kwargs):
             data = request.get_json(silent=True) or {}
@@ -43,6 +49,7 @@ class RenderProgress:
                 return jsonify(status='error', error='Invalid render ID.'), 400
             with self.lock:
                 now = monotonic()
+                # Evict stale records older than 1 hour before checking capacity/duplicates.
                 self.records = {key: value for key, value in self.records.items()
                                 if now - value['updated_at'] < 3600}
                 if render_id in self.records:
@@ -67,12 +74,15 @@ class RenderProgress:
         return tracked
 
     def logger(self):
+        """Return a Proglog logger bound to the current request's ``render_progress_id``."""
         render_id = getattr(g, 'render_progress_id', None)
         if render_id is None:
             return None
         tracker = self
 
         class Logger(ProgressBarLogger):
+            """Bridge MoviePy/Proglog bar updates to ``RenderProgress`` percentage ranges."""
+
             def bars_callback(self, bar, attr, value, old_value=None):
                 if attr != 'index':
                     return
@@ -80,6 +90,7 @@ class RenderProgress:
                 if total <= 0:
                     return
                 fraction = max(0, min(1, value / total))
+                # Map audio chunking to 5-15% and video frame encoding to 15-95%.
                 if bar == 'chunk':
                     tracker.update(render_id, progress=round(5 + 10 * fraction), phase='Encoding audio')
                 elif bar == 'frame_index':
