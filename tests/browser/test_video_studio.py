@@ -3,6 +3,8 @@
 Python API and real title rasterization run in-process. These are behavior
 checks, not visual regression tests of external Tailwind/font assets.
 """
+import base64
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 from unittest.mock import Mock
@@ -11,8 +13,24 @@ import pytest
 import requests
 from PIL import Image
 from playwright.sync_api import sync_playwright
+from werkzeug.wrappers import Request
 
 pytestmark = pytest.mark.browser
+
+
+def render_payload(request):
+    """Decode the browser's multipart settings and binary assets for assertions."""
+    assert request.headers['content-type'].startswith('multipart/form-data;')
+    parsed = Request.from_values(method='POST', data=request.post_data_buffer,
+                                 content_type=request.headers['content-type'])
+    try:
+        payload = json.loads(parsed.form['payload'])
+        for field, storage in parsed.files.items():
+            payload[field] = (f'data:{storage.mimetype};base64,'
+                              + base64.b64encode(storage.read()).decode('ascii'))
+        return payload
+    finally:
+        parsed.close()
 
 # Only the layout primitives required for interaction/visibility checks.
 # Product CSS still comes from the actual template.
@@ -61,7 +79,7 @@ def studio(web, worker, monkeypatch):
                     previews.append(request.post_data_json)
                 result = web.app.test_client().open(
                     url.path + ('?' + url.query if url.query else ''),
-                    method=request.method, data=request.post_data,
+                    method=request.method, data=request.post_data_buffer,
                     content_type=request.headers.get('content-type'),
                 )
                 route.fulfill(status=result.status_code, body=result.data,
@@ -96,7 +114,7 @@ def test_custom_overlay_files_follow_enable_switches_in_render_payload(studio, t
     payloads = []
 
     def capture(route):
-        payloads.append(route.request.post_data_json)
+        payloads.append(render_payload(route.request))
         route.fulfill(status=400, json={'error': 'Test render captured'})
 
     page.route('**/api/render_video', capture)
@@ -298,7 +316,7 @@ def test_watermark_upload_text_effects_and_render_payload(studio, tmp_path):
     page.evaluate("renderFiles.bgFileInput = new File(['test'], 'background.mp4', {type:'video/mp4'})")
     payloads = []
     def capture(route):
-        payloads.append(route.request.post_data_json)
+        payloads.append(render_payload(route.request))
         route.fulfill(status=400, content_type='application/json', body='{"error":"Test render captured"}')
     page.route('**/api/render_video', capture)
     page.evaluate("handleRenderVideo({preventDefault(){}})")
@@ -549,7 +567,7 @@ def test_cut_audio_is_restored_and_sent_independently_of_video_title(studio, tmp
     page.locator('#videoTitleInput').fill('A completely different headline')
     payloads = []
     def capture(route):
-        payloads.append(route.request.post_data_json)
+        payloads.append(render_payload(route.request))
         route.fulfill(status=400, content_type='application/json', body='{"error":"Test render captured"}')
     page.route('**/api/render_video', capture)
     page.evaluate('handleRenderVideo({preventDefault(){}})')
@@ -571,7 +589,7 @@ def test_music_is_automatic_when_selected_and_optional_when_absent(studio, tmp_p
     page.locator('#videoTitleInput').fill('Headline')
     requests = []
     def capture(route):
-        requests.append(route.request.post_data_json)
+        requests.append(render_payload(route.request))
         route.fulfill(status=400, content_type='application/json', body='{"error":"Test render captured"}')
     page.route('**/api/render_video', capture)
     page.evaluate('handleRenderVideo({preventDefault(){}})')
@@ -605,7 +623,7 @@ def test_render_progress_bar_follows_worker_and_stops_after_failure(studio):
     assert page.locator('#renderProgressPhase').inner_text() == 'Encoding video'
     assert page.locator('#renderBtn').is_disabled()
     assert len(pending) == 1
-    render_id = pending[0].request.post_data_json['render_id']
+    render_id = render_payload(pending[0].request)['render_id']
     assert progress_requests[0].endswith(render_id)
     pending[0].fulfill(status=500, json={'status': 'error', 'error': 'Encoder failed'})
     page.wait_for_function("!document.getElementById('renderBtn').disabled")

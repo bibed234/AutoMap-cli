@@ -4,7 +4,7 @@ import base64
 import pytest
 from PIL import Image
 
-from test_video_studio import studio, reopen_studio
+from test_video_studio import studio, reopen_studio, render_payload
 
 pytestmark = pytest.mark.browser
 
@@ -41,7 +41,7 @@ def test_uploaded_music_restores_cuts_and_is_sent_to_render(studio, tmp_path):
     page.locator('#videoTitleInput').fill('Uploaded music video')
     renders = []
     def render(route):
-        renders.append(route.request.post_data_json)
+        renders.append(render_payload(route.request))
         route.fulfill(status=400,json={'error':'Captured'})
     page.route('**/api/render_video',render)
     page.evaluate('handleRenderVideo({preventDefault(){}})')

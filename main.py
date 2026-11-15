@@ -286,6 +286,8 @@ def _auto_map_with_ai_cache(*, refresh: bool, provider: str, api_key, **kwargs):
         provider=provider,
         temperature=temperature,
         short_form=kwargs.get('optional_feature') == 'short_form',
+        web_search=bool(kwargs.get('web_search', False)),
+        max_search_requests=kwargs.get('max_search_requests', 5),
     )
     cached = None if refresh else ai_cache.get(cache_key)
     if cached is not None:
@@ -702,7 +704,7 @@ def download_batch_zip():
         return jsonify({"status": "error", "error": "No maps provided."}), 400
 
     buf = io.BytesIO()
-    used_names: dict[str, int] = {}
+    used_names: set[str] = set()
     added = 0
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for idx, item in enumerate(items, start=1):
@@ -710,20 +712,27 @@ def download_batch_zip():
                 continue
             image_url = str(item.get("image_url") or "").strip()
             prompt = str(item.get("prompt") or "").strip()
-            if not image_url:
+            if not image_url.startswith('data:image/png;base64,'):
                 continue
-            src_name = Path(image_url.split("?")[0]).name
-            src_path = Path(GENERATED_DIR) / src_name
-            if not src_path.is_file():
+            try:
+                image_bytes = base64.b64decode(image_url.split(',', 1)[1], validate=True)
+                with Image.open(io.BytesIO(image_bytes)) as image:
+                    if image.format != 'PNG':
+                        continue
+                    image.verify()
+            except (ValueError, OSError):
                 continue
 
             base = re.sub(r"[^\w\-]+", "_", prompt.strip().replace(" ", "_")).strip("_") if prompt else f"map_{idx:02d}"
             if not base:
                 base = f"map_{idx:02d}"
-            count = used_names.get(base, 0) + 1
-            used_names[base] = count
-            arc_name = f"{base}.png" if count == 1 else f"{base}_{count}.png"
-            zf.write(src_path, arcname=arc_name)
+            count = 1
+            arc_name = f"{base}.png"
+            while arc_name in used_names:
+                count += 1
+                arc_name = f"{base}_{count}.png"
+            used_names.add(arc_name)
+            zf.writestr(arc_name, image_bytes)
             added += 1
 
     if added == 0:
@@ -857,7 +866,6 @@ def generate_batch():
                 api_key=item_api_key,
                 **temperature_options,
                 **({"web_search": True, "max_search_requests": max(1, min(10, int(data.get("max_search_requests") or 5)))} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
-            **({"web_search": True} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
                 **item_style_kwargs,
             )
         except Exception as err:  # noqa: BLE001

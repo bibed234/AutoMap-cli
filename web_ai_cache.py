@@ -1,7 +1,7 @@
 """In-memory cache of AI map data so visual-only changes skip the AI request.
 
 Entries are keyed by a SHA-256 digest of the request-affecting inputs
-(prompt, map type, model, provider, temperature, short-form flag) plus a
+(prompt, map type, model, provider, temperature, short-form flag, search settings) plus a
 per-user scope. The scope is derived from the web session identity and a
 *hash* of any user-supplied API key; the key itself is never stored.
 Only the parsed AI answer (region -> value) is kept as cache content.
