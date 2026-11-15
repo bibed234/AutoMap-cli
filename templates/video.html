@@ -1241,6 +1241,14 @@
                             </div>
                         </div>
                     </div>
+                    <details class="mt-2">
+                        <summary class="text-[11px] font-medium text-slate-400 hover:text-slate-200 cursor-pointer select-none">
+                            Optional: YouTube Cookies (Netscape format, saved in browser)
+                        </summary>
+                        <textarea id="musicCookiesInput" rows="3"
+                            placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;..."
+                            class="mt-1.5 w-full px-3 py-2 bg-slate-950/90 border border-slate-700/80 rounded-xl text-[11px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-rose-500 transition"></textarea>
+                    </details>
                 </form>
             </div>
 
@@ -1282,7 +1290,7 @@
     <script src="{{ url_for('static', filename='studio-storage.js') }}"></script>
     <script>
         const VIDEO_SETTINGS_KEY = 'automap_video_settings_v1';
-        const VIDEO_SETTING_IDS = ['musicUrlInput', 'cutStartInput', 'cutDurationInput',
+        const VIDEO_SETTING_IDS = ['musicUrlInput', 'musicCookiesInput', 'cutStartInput', 'cutDurationInput',
             'videoTitleInput', 'titleFontSelect', 'titleFontSize', 'titleFirstLineColor',
             'titleOtherLinesColor', 'titleUppercase', 'visualEffects', 'introFadeToggle',
             'topLeftStickerSelect', 'topRightStickerSelect', 'subscribeBadgeToggle',
@@ -1660,11 +1668,12 @@
             logToConsole(`[Music] POST /api/music_download ${url}`, 'cmd');
 
             try {
+                const cookies = (document.getElementById('musicCookiesInput')?.value || '').trim();
                 // Single request: backend downloads + converts and returns the audio directly.
                 const response = await fetch('/api/music_download', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url })
+                    body: JSON.stringify(cookies ? { url, cookies } : { url })
                 });
 
                 let result;
