@@ -1112,11 +1112,14 @@ def music_download():
     if not url:
         return jsonify({"status": "error", "error": "Missing 'url' in request body."}), 400
 
+    cookies = str(data.get('cookies') or '').strip()
+    forward_payload = {"url": url, "cookies": cookies} if cookies else {"url": url}
+
     # Another service downloads music from YouTube and converts it to mp3.
     try:
         response = requests.post(
             f"{WORKER_URL}/api/music_download/",
-            json={"url": url},
+            json=forward_payload,
             timeout=150,
         )
     except requests.RequestException as e:
