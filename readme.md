@@ -153,6 +153,11 @@ The temperature slider accepts `0`–`2` and defaults to `0.75` in the web UI. I
 
 The browser remembers API keys, the last topic, and palette preferences. Video Studio also stores selected materials and settings locally. Storage limits or disabled storage can prevent persistence; download important outputs rather than treating browser storage as an archive.
 
+**Run History** is saved in this browser's IndexedDB with map images, values, and
+generation settings, but without API keys. It survives reloads and reopening the
+site. Runs older than 24 hours are removed when the page opens and checked every
+minute while it is open. **Clear History** removes the saved history as well.
+
 ### Create a portrait video
 
 1. Generate a map or select a map image in Video Studio.

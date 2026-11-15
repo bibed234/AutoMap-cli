@@ -554,3 +554,84 @@ def test_label_shift_and_repaint_are_accessible_next_to_generate_without_ai(map_
     page.add_style_tag(content='.hidden {display:none!important}')
     page.locator('button[onclick="updateLabelOffset(0)"]').click()
     assert page.evaluate('getFormState().label_style.offset_x') == 0
+
+
+def test_run_history_persists_map_and_settings_without_api_keys(map_page, web):
+    page = map_page
+    image = io.BytesIO()
+    Image.new('RGB', (2, 2), 'purple').save(image, format='PNG')
+    image_url = 'data:image/png;base64,' + base64.b64encode(image.getvalue()).decode()
+    page.evaluate('''async ({image_url, analysis, values}) => {
+        await runHistoryReady;
+        addToHistory({...getFormState(), topic:'Saved map topic', api_key:'do-not-store-in-history',
+                      label_style:{...getFormState().label_style, offset_x:75}}, 'Saved command',
+                     {image_url, analysis, map_values:values});
+        await historyWrites;
+    }''', {'image_url': image_url, 'analysis': web._build_analysis_from_ai(VALUES, mode='text'), 'values': VALUES})
+    saved = page.evaluate('StudioStorage.getHistory()')
+    assert len(saved) == 1
+    assert 'api_key' not in saved[0]['state']
+    assert 'do-not-store-in-history' not in str(saved)
+    page.reload()
+    page.evaluate('async () => { await runHistoryReady; }')
+    page.add_style_tag(content='.hidden {display:none!important}')
+    assert page.locator('#historyCountBadge').inner_text() == '1'
+    page.evaluate("switchBottomTab('history')")
+    page.locator('#historyList > div').first.click()
+    assert page.locator('#topicInput').input_value() == 'Saved map topic'
+    assert page.locator('#serverMapImage').get_attribute('src') == image_url
+    assert page.evaluate('lastMapValues') == VALUES
+    assert page.evaluate('getFormState().label_style.offset_x') == 75
+
+
+def test_history_older_than_one_day_is_deleted_on_open_and_while_open(map_page):
+    page = map_page
+    page.evaluate('''async () => {
+        await runHistoryReady;
+        const state = getFormState(), now = Date.now();
+        await StudioStorage.addHistory({id:'recent', createdAt:now-23*3600000, state, cmd:'Recent'});
+        await StudioStorage.addHistory({id:'expired', createdAt:now-25*3600000, state, cmd:'Expired'});
+    }''')
+    page.reload()
+    page.evaluate('async () => { await runHistoryReady; }')
+    assert page.evaluate('runHistory.map(entry => entry.id)') == ['recent']
+    assert page.evaluate('async () => (await StudioStorage.getHistory()).map(entry => entry.id)') == ['recent']
+    page.evaluate('''async () => {
+        const later = Date.now() + 2*3600000;
+        Date.now = () => later;
+        pruneRunHistory();
+        await historyWrites;
+    }''')
+    assert page.locator('#historyCountBadge').inner_text() == '0'
+    assert page.evaluate('StudioStorage.getHistory()') == []
+
+
+def test_clear_history_is_persistent_and_late_restore_cannot_resurrect_it(map_page):
+    page = map_page
+    page.evaluate('''async () => {
+        await runHistoryReady;
+        addToHistory(getFormState(), 'Clear this');
+        await historyWrites;
+        const old = [...runHistory];
+        let release;
+        StudioStorage.getHistory = () => new Promise(resolve => release = resolve);
+        const loading = restoreRunHistory();
+        clearHistory();
+        release(old);
+        await loading;
+        await historyWrites;
+    }''')
+    assert page.locator('#historyCountBadge').inner_text() == '0'
+    page.reload()
+    page.evaluate('async () => { await runHistoryReady; }')
+    assert page.evaluate('runHistory.length') == 0
+    assert page.evaluate('StudioStorage.getHistory()') == []
+    page.add_init_script("indexedDB.open = () => { throw new DOMException('Blocked', 'SecurityError'); };")
+    page.reload()
+    page.evaluate('''async () => {
+        await runHistoryReady;
+        addToHistory(getFormState(), 'Memory only');
+        await historyWrites;
+    }''')
+    assert page.locator('#historyCountBadge').inner_text() == '1'
+    assert 'Kept for this visit only' in page.locator('#historyStorageStatus').inner_text()

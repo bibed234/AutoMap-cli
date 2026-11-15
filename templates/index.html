@@ -894,8 +894,9 @@
                     <div class="text-slate-400">[Info] Select your desired flags <span class="text-indigo-400">-m, -mp, -gsm, -eop, --model, --font</span> and click "Run CLI &amp; Generate Map".</div>
                 </div>
 
-                <!-- Tab 2: Generation History -->
+                <!-- Tab 2: Generation History (saved locally for 24 hours) -->
                 <div id="historyTabContent" class="hidden p-4 bg-slate-950/90 h-40 overflow-y-auto">
+                    <p id="historyStorageStatus" role="status" class="text-[11px] text-slate-400 mb-2">Saved in this browser · automatically removed after 24 hours.</p>
                     <div id="historyList" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
                         <div class="text-xs text-slate-500 col-span-full text-center py-8">No runs yet. Generate your first map!</div>
                     </div>
@@ -1160,6 +1161,9 @@
         let dragStartX = 0;
         let dragStartY = 0;
         let runHistory = [];
+        let historyWrites = Promise.resolve();
+        let historyRevision = 0;
+        const HISTORY_RETENTION_MS = StudioStorage.HISTORY_RETENTION_MS;
         let apiKeyRequired = false;
         let loadingTimerInterval = null;
 
@@ -1210,6 +1214,9 @@
 
         // --- Initialize on Load ---
         window.addEventListener('DOMContentLoaded', () => {
+            window.runHistoryReady = restoreRunHistory();
+            setInterval(pruneRunHistory, 60000);
+            window.addEventListener('focus', pruneRunHistory);
             restoreSavedMapInputs();
             try { updateLabelOffset(localStorage.getItem(LABEL_OFFSET_STORAGE_KEY) || 0, false); } catch {}
             updateAiTemperature(DEFAULT_AI_TEMPERATURE, false);
@@ -2651,26 +2658,73 @@
             showToast("Console output cleared", "info");
         }
 
+        function queueHistoryWrite(operation) {
+            historyWrites = historyWrites.then(operation).catch(() => {
+                document.getElementById('historyStorageStatus').textContent = 'History could not be saved. Kept for this visit only.';
+                logToConsole('[History] Browser storage is unavailable or full. New history is kept for this visit only.', 'warn');
+            });
+        }
+
+        async function restoreRunHistory() {
+            const revision = historyRevision;
+            try {
+                const saved = await StudioStorage.getHistory();
+                if (revision !== historyRevision) return;
+                const entries = new Map(saved.map(entry => [entry.id, entry]));
+                for (const entry of runHistory) entries.set(entry.id, entry);
+                const cutoff = Date.now() - HISTORY_RETENTION_MS;
+                runHistory = [...entries.values()].filter(entry => entry.createdAt >= cutoff)
+                    .sort((a, b) => b.createdAt - a.createdAt);
+                renderRunHistory();
+            } catch {
+                // History remains usable in memory if IndexedDB is blocked.
+            }
+        }
+
+        function pruneRunHistory() {
+            const cutoff = Date.now() - HISTORY_RETENTION_MS;
+            const previousLength = runHistory.length;
+            runHistory = runHistory.filter(entry => entry.createdAt >= cutoff);
+            if (runHistory.length !== previousLength) renderRunHistory();
+            queueHistoryWrite(() => StudioStorage.pruneHistory());
+        }
+
         function clearHistory() {
+            historyRevision++;
             runHistory = [];
-            document.getElementById('historyCountBadge').textContent = '0';
-            document.getElementById('historyList').innerHTML = '<div class="text-xs text-slate-500 col-span-full text-center py-8">No runs yet. Generate your first map!</div>';
+            renderRunHistory();
+            queueHistoryWrite(() => StudioStorage.clearHistory());
             showToast("Run history cleared", "info");
         }
 
         function addToHistory(state, cmd, extra = {}) {
-            runHistory.unshift({
-                time: new Date().toLocaleTimeString(),
-                state: { ...state },
+            const {api_key, ...savedState} = state;
+            const createdAt = Date.now();
+            const entry = {
+                id: `${createdAt}-${Math.random().toString(36).slice(2)}`,
+                createdAt,
+                time: new Date(createdAt).toLocaleString(),
+                state: savedState,
                 cmd,
                 image_url: extra.image_url || null,
                 analysis: extra.analysis || null,
                 map_values: extra.map_values || null
-            });
-            document.getElementById('historyCountBadge').textContent = runHistory.length;
+            };
+            runHistory = [entry, ...runHistory.filter(item => createdAt - item.createdAt <= HISTORY_RETENTION_MS)];
+            renderRunHistory();
+            queueHistoryWrite(() => StudioStorage.addHistory(entry));
+        }
 
+        function renderRunHistory() {
+            document.getElementById('historyCountBadge').textContent = runHistory.length;
             const list = document.getElementById('historyList');
             list.replaceChildren();
+            if (!runHistory.length) {
+                const empty = document.createElement('div');
+                empty.className = 'text-xs text-slate-500 col-span-full text-center py-8';
+                empty.textContent = 'No runs yet. History is saved for 24 hours.';
+                list.appendChild(empty);
+            }
             runHistory.forEach((item, idx) => {
                 const row = document.createElement('div');
                 row.className = 'p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-indigo-500/60 cursor-pointer transition flex items-center gap-2.5';
@@ -2708,6 +2762,11 @@
         function restoreHistoryItem(index) {
             const item = runHistory[index];
             if (!item) return;
+            if (Date.now() - item.createdAt > HISTORY_RETENTION_MS) {
+                pruneRunHistory();
+                showToast('This run has expired after 24 hours.', 'info');
+                return;
+            }
 
             const s = item.state;
             updateLabelOffset(s.label_style?.offset_x ?? 0);
@@ -2736,6 +2795,9 @@
                 if (metaBadge) metaBadge.textContent = `Restored (${item.time})`;
                 if (item.analysis) {
                     applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
+                } else {
+                    lastMapValues = item.map_values || null;
+                    lastMapAnalysis = null;
                 }
                 syncLatestMapToStudioStorage(item.image_url, s.topic);
             }
