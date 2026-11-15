@@ -162,6 +162,9 @@ def test_repaint_shows_busy_state_until_image_or_error_is_ready(map_page, status
     page.click('#restyleCurrentMapBtn')
     page.wait_for_function('mapRepaintPending')
     assert page.locator('#mapRepaintStatus').is_visible()
+    assert page.locator('#mapViewport #mapRepaintOverlay').is_visible()
+    assert 'Re-painting map' in page.locator('#mapRepaintOverlay').inner_text()
+    assert page.locator('#mapViewport').get_attribute('aria-busy') == 'true'
     assert page.locator('#mapRepaintButtonLabel').inner_text() == 'Re-painting…'
     assert page.locator('#restyleCurrentMapBtn').get_attribute('aria-busy') == 'true'
     assert page.locator('#restyleCurrentMapBtn').is_disabled()
@@ -179,6 +182,8 @@ def test_repaint_shows_busy_state_until_image_or_error_is_ready(map_page, status
     pending[0].fulfill(status=status, json=payload)
     page.wait_for_function('!mapRepaintPending')
     assert page.locator('#mapRepaintStatus').is_hidden()
+    assert page.locator('#mapRepaintOverlay').is_hidden()
+    assert page.locator('#mapViewport').get_attribute('aria-busy') == 'false'
     assert page.locator('#restyleCurrentMapBtn').get_attribute('aria-busy') == 'false'
     assert page.locator('#fillingPaletteTheme').is_enabled()
     assert page.locator('#mapRepaintButtonLabel').inner_text() == 'Apply & Re-Paint Current Map'

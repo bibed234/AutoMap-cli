@@ -760,6 +760,13 @@
 
                 <!-- Map Viewport Area -->
                 <div id="mapViewport" class="relative flex-1 bg-slate-950 canvas-grid flex items-center justify-center overflow-hidden select-none p-4 sm:p-8 cursor-grab active:cursor-grabbing">
+                    <div id="mapRepaintOverlay" role="status" aria-live="polite" class="hidden absolute inset-0 z-30 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-6 cursor-wait">
+                        <div class="flex flex-col items-center gap-3 rounded-2xl border border-emerald-500/40 bg-slate-900/95 px-8 py-6 text-center shadow-2xl">
+                            <i class="fa-solid fa-circle-notch animate-spin text-2xl text-emerald-300" aria-hidden="true"></i>
+                            <span class="text-base font-semibold text-white">Re-painting map…</span>
+                            <span class="text-xs text-slate-300">Updating colors and label positions. Please wait.</span>
+                        </div>
+                    </div>
                     
                     <!-- Subtle Cartographic Coordinate HUD Accents -->
                     <div class="absolute top-3 left-4 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-500/80">
@@ -2384,6 +2391,8 @@
             document.getElementById('mapRepaintIcon').className = busy
                 ? 'fa-solid fa-circle-notch animate-spin' : 'fa-solid fa-paintbrush';
             document.getElementById('mapRepaintStatus').classList.toggle('hidden', !busy);
+            document.getElementById('mapRepaintOverlay').classList.toggle('hidden', !busy);
+            document.getElementById('mapViewport').setAttribute('aria-busy', String(busy));
         }
 
         async function restyleCurrentMapFromStudio() {
