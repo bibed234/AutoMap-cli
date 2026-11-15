@@ -353,7 +353,11 @@
                         </div>
 
                         <!-- Batch Generation: Ideas from CSV -->
-                        <div class="mt-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-2">
+                        <div id="csvDropZone"
+                            ondragover="handleCsvDragOver(event)"
+                            ondragleave="handleCsvDragLeave(event)"
+                            ondrop="handleCsvDrop(event)"
+                            class="mt-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-2 transition-colors">
                             <div class="flex items-center justify-between gap-2">
                                 <span class="text-[11px] font-medium text-slate-300 flex items-center gap-1.5">
                                     <i class="fa-solid fa-file-csv text-emerald-400 text-[11px]"></i>
@@ -1653,14 +1657,17 @@
             showToast(`Downloading ${lastBatchResults.length} maps...`, 'success');
         }
 
-        async function handleIdeasFileSelected(event) {
-            const file = event.target?.files?.[0];
+        async function loadIdeasFile(file) {
             const badge = document.getElementById('ideasFileBadge');
             const btn = document.getElementById('generateBatchBtn');
             if (!file) {
                 loadedIdeasFile = { filename: '', text: '' };
                 if (badge) badge.textContent = 'No file';
                 if (btn) btn.disabled = true;
+                return;
+            }
+            if (!file.name.toLowerCase().endsWith('.csv')) {
+                showToast('Please drop a .csv file', 'warn');
                 return;
             }
             try {
@@ -1673,6 +1680,35 @@
             } catch (err) {
                 showToast(`Failed to read file: ${err.message}`, 'error');
             }
+        }
+
+        async function handleIdeasFileSelected(event) {
+            await loadIdeasFile(event.target?.files?.[0]);
+        }
+
+        function handleCsvDragOver(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const zone = document.getElementById('csvDropZone');
+            if (zone) zone.classList.add('border-indigo-500', 'bg-indigo-950/30');
+        }
+
+        function handleCsvDragLeave(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const zone = document.getElementById('csvDropZone');
+            if (zone && !zone.contains(event.relatedTarget)) {
+                zone.classList.remove('border-indigo-500', 'bg-indigo-950/30');
+            }
+        }
+
+        async function handleCsvDrop(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const zone = document.getElementById('csvDropZone');
+            if (zone) zone.classList.remove('border-indigo-500', 'bg-indigo-950/30');
+            const file = event.dataTransfer?.files?.[0];
+            await loadIdeasFile(file);
         }
 
         async function generateMapsFromFile() {
