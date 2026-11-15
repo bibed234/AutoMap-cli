@@ -96,7 +96,7 @@ def list_deepseek_models(api_key):
                    and isinstance(model.get('id'), str) and model['id'].startswith('deepseek-')})
 
 
-def _deepseek_request(prompt, model, api_key=None, *, temperature=None):
+def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_search=False):
     payload = {
         'model': model,
         'messages': [
@@ -108,6 +108,8 @@ def _deepseek_request(prompt, model, api_key=None, *, temperature=None):
         'max_tokens': 4096,
         'stream': False,
     }
+    if web_search:
+        payload['tools'] = [{'type': 'deepseek_web_search', 'name': 'deepseek_web_search'}]
     if temperature is not None:
         payload['temperature'] = validate_temperature(temperature)
     result = _deepseek_json('chat/completions', api_key or configured_api_key('deepseek'), payload=payload)
@@ -145,7 +147,7 @@ def validate_temperature(value: object) -> float:
     return temperature
 
 
-def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> str | None:
+def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_search=False) -> str | None:
     """Send a request to the AI model and return the response as a string."""
 
     if mode == 'default' or mode == 'flag':
@@ -171,7 +173,7 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> st
     }
     if provider_for_model(ai_model) == 'deepseek':
         with log.spinner('Waiting for DeepSeek response...'):
-            return _deepseek_request(prompt_to_ai, ai_model, api_key, temperature=temperature)
+            return _deepseek_request(prompt_to_ai, ai_model, api_key, temperature=temperature, web_search=web_search)
     try:
         with log.spinner("Waiting for AI response..."):
             # If a key was supplied (e.g. from the web UI when .env is missing),
@@ -219,12 +221,14 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> st
 
 
 def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None, _ai_answer = None,
-               *, temperature: float | None = None) -> dict | None:
+               *, temperature: float | None = None, web_search: bool = False) -> dict | None:
     "handle the AI request and parse the response into a dictionary."
     if _ai_answer is not None:
         request = _ai_answer
     else:
         options = {} if temperature is None else {'temperature': temperature}
+        if web_search:
+            options['web_search'] = True
         request = _ai_request(prompt, mode, ai_model, api_key, **options)
 
     # The AI request can fail and return None (the error is already logged).

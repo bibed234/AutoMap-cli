@@ -541,7 +541,8 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
              auto_style: bool | None = None,
              palette_theme: str = "auto",
              ai_answer_override: dict[str, object] | None = None,
-             temperature: float | None = None):
+             temperature: float | None = None,
+             web_search: bool = False):
     """Create a map from an AI query and save it as ``result.png``.
 
     CLI options:
@@ -654,6 +655,8 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
         # Requesting information from AI
         log.step("Requesting data from AI")
         ai_options = {} if temperature is None else {'temperature': temperature}
+        if web_search:
+            ai_options["web_search"] = True
         ai_answer = ai_request(prompt, map_type, model, api_key, **ai_options)
 
     if ai_answer is None:

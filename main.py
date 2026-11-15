@@ -581,6 +581,7 @@ def generate():
             io_res=True,
             api_key=api_key,
             **temperature_options,
+            **({"web_search": True} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
             **style_kwargs,
         )
     except AIServiceError as error:
@@ -849,6 +850,8 @@ def generate_batch():
                 io_res=True,
                 api_key=item_api_key,
                 **temperature_options,
+                **({"web_search": True} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
+            **({"web_search": True} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
                 **item_style_kwargs,
             )
         except Exception as err:  # noqa: BLE001
