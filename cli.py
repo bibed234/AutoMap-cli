@@ -64,10 +64,10 @@ def main():
               help="Data mode: text (default) or number.")
 @click.option("-mp", "--map-type",
               "map_type",
-              type=click.Choice(["default", "flag", "world"], case_sensitive=False),
+              type=click.Choice(["default", "flag", "world", "world_countries"], case_sensitive=False),
               default="default",
               show_default=True,
-              help="Map type: default (default), flag or world.")
+              help="Map type: default (default), flag, world or world_countries.")
 @click.option("-gsm", "--global-size-modifier",
               "size_mod",
               type=int,
@@ -172,10 +172,10 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
               help="Default data mode: text (default) or number.")
 @click.option("-mp", "--map-type",
               "map_type",
-              type=click.Choice(["default", "flag", "world"], case_sensitive=False),
+              type=click.Choice(["default", "flag", "world", "world_countries"], case_sensitive=False),
               default="default",
               show_default=True,
-              help="Default map type: default, flag or world.")
+              help="Default map type: default, flag, world or world_countries.")
 @click.option("-gsm", "--global-size-modifier",
               "size_mod",
               type=int,

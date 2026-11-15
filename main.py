@@ -55,8 +55,9 @@ from map.auto_map import (
 from map.constants import europe_coords, world_coords
 from cli import AVAILABLE_MODELS
 from map.functions import (
-    AIServiceError, configured_api_key, list_deepseek_models, parse_ideas_content,
-    provider_for_model, provider_key_name, slugify_prompt, validate_temperature,
+    _ALLOWED_MAP_TYPES, AIServiceError, configured_api_key, list_deepseek_models,
+    parse_ideas_content, provider_for_model, provider_key_name, slugify_prompt,
+    validate_temperature,
 )
 
 from flask import Flask, request, jsonify, send_file, render_template, Response, session
@@ -415,8 +416,16 @@ def _inspect_uploaded_map_image(
     if width < 8 or height < 8:
         raise ValueError("Uploaded map image is too small to inspect.")
 
-    ref_coords = world_coords if map_type == "world" else europe_coords
-    base_name = "world_map.png" if map_type == "world" else "default_map.png"
+    if map_type == "world":
+        ref_coords = world_coords
+        base_name = "world_map.png"
+    elif map_type == "world_countries":
+        from map.world_countries_coords import world_countries_coords
+        ref_coords = world_countries_coords
+        base_name = "world_countries_map.png"
+    else:
+        ref_coords = europe_coords
+        base_name = "default_map.png"
     base_path = BASE_DIR / "resources" / "maps" / base_name
     ref_w, ref_h = (2200, 1800)
     if base_path.is_file():
@@ -552,6 +561,15 @@ def generate():
             temperature_options['temperature'] = validate_temperature(data['temperature'])
         except ValueError as error:
             return jsonify(status='error', error=str(error)), 400
+
+    if "map_type" in data:
+        req_map_type = str(data["map_type"] or "").strip().lower()
+        if req_map_type not in _ALLOWED_MAP_TYPES:
+            return jsonify(
+                status='error',
+                error=f"Invalid map_type '{req_map_type}'. Allowed: {', '.join(sorted(_ALLOWED_MAP_TYPES))}.",
+            ), 400
+        data["map_type"] = req_map_type
 
     # Rebuild the equivalent CLI command for display only; it is never executed.
     command = (
@@ -800,7 +818,12 @@ def generate_batch():
 
     default_font, default_eop, default_gsm = _parse_render_params(data)
     default_mode = str(data.get("mode") or "text").lower()
-    default_map_type = str(data.get("map_type") or "default").lower()
+    default_map_type = str(data.get("map_type") or "default").strip().lower()
+    if default_map_type not in _ALLOWED_MAP_TYPES:
+        return jsonify({
+            "status": "error",
+            "error": f"Invalid map_type '{default_map_type}'. Allowed: {', '.join(sorted(_ALLOWED_MAP_TYPES))}.",
+        }), 400
     default_model = str(data.get("model") or ('deepseek-flash' if provider == 'deepseek' else AVAILABLE_MODELS[0]))
     available_fonts = set(_available_fonts())
 
@@ -943,7 +966,12 @@ def api_restyle_map():
     font_name, extra_option, gsm = _parse_render_params(data)
 
     mode = str(data.get("mode") or "text")
-    map_type = str(data.get("map_type") or "default")
+    map_type = str(data.get("map_type") or "default").strip().lower()
+    if map_type not in _ALLOWED_MAP_TYPES:
+        return jsonify({
+            "status": "error",
+            "error": f"Invalid map_type '{map_type}'. Allowed: {', '.join(sorted(_ALLOWED_MAP_TYPES))}.",
+        }), 400
     palette_theme = str(data.get("palette_theme") or "auto")
     auto_style = bool(data.get("auto_style", False))
 
