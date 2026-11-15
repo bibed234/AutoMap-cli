@@ -684,6 +684,29 @@ def download_batch_template():
     )
 
 
+@app.route('/api/parse_batch_csv', methods=['POST'])
+def parse_batch_csv():
+    """Parse an uploaded .csv ideas file and return the normalized idea rows."""
+    if request.files and "file" in request.files:
+        uploaded = request.files["file"]
+        filename = uploaded.filename or ""
+        ideas_text = uploaded.read().decode("utf-8", errors="replace")
+    else:
+        data = request.get_json(silent=True) or {}
+        filename = str(data.get("filename") or "")
+        ideas_text = str(data.get("ideas_text") or "")
+
+    try:
+        ideas = parse_ideas_content(ideas_text, filename=filename)
+    except ValueError as err:
+        return jsonify({"status": "error", "error": str(err)}), 400
+
+    if not ideas:
+        return jsonify({"status": "error", "error": "No valid map ideas found in the uploaded file."}), 400
+
+    return jsonify({"status": "success", "ideas": ideas, "total": len(ideas)})
+
+
 @app.route('/api/generate_batch/', methods=['POST'])
 @app.route('/api/generate_batch', methods=['POST'])
 def generate_batch():

@@ -378,6 +378,10 @@
                                     <span>Generate All</span>
                                 </button>
                             </div>
+                            <label class="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer select-none pt-0.5">
+                                <input type="checkbox" id="batchParallelToggle" checked class="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500">
+                                <span>Parallel per-map requests (with progress bar)</span>
+                            </label>
                             <div id="batchResultsPanel" class="hidden pt-2 border-t border-slate-800/80 space-y-1.5">
                                 <div class="flex items-center justify-between">
                                     <span id="batchResultsSummary" class="text-[10px] font-mono text-emerald-300">0 maps ready</span>
@@ -1679,59 +1683,177 @@
             const state = getFormState();
             const btn = document.getElementById('generateBatchBtn');
             const loadingEl = document.getElementById('loadingOverlay');
+            const stageEl = document.getElementById('loadingStage');
             if (btn) btn.disabled = true;
             if (loadingEl) loadingEl.classList.remove('hidden');
-            startLoadingStages();
+
+            let progressWrap = document.getElementById('batchProgressWrap');
+            if (!progressWrap && loadingEl) {
+                progressWrap = document.createElement('div');
+                progressWrap.id = 'batchProgressWrap';
+                progressWrap.className = 'w-64 mt-3';
+                progressWrap.innerHTML = `
+                    <div class="flex justify-between text-[11px] font-mono text-slate-300 mb-1">
+                        <span id="batchProgressLabel">Parsing CSV...</span>
+                        <span id="batchProgressPct">0%</span>
+                    </div>
+                    <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                        <div id="batchProgressFill" class="h-full bg-indigo-500 transition-all duration-200" style="width: 0%"></div>
+                    </div>
+                `;
+                loadingEl.appendChild(progressWrap);
+            }
+            const updateProgress = (done, total, label) => {
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                const fill = document.getElementById('batchProgressFill');
+                const lbl = document.getElementById('batchProgressLabel');
+                const pctEl = document.getElementById('batchProgressPct');
+                if (fill) fill.style.width = `${pct}%`;
+                if (lbl) lbl.textContent = label || `${done}/${total} maps`;
+                if (pctEl) pctEl.textContent = `${pct}%`;
+                if (stageEl) stageEl.textContent = label || `Generating ${done}/${total} maps...`;
+            };
 
             try {
-                const res = await fetch('/api/generate_batch', {
+                const useParallel = document.getElementById('batchParallelToggle')?.checked !== false;
+                if (!useParallel) {
+                    updateProgress(0, 1, 'Running single batch request...');
+                    const res = await fetch('/api/generate_batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ...state,
+                            filename: loadedIdeasFile.filename,
+                            ideas_text: loadedIdeasFile.text
+                        })
+                    });
+                    const data = await res.json();
+                    if (!res.ok || data.status !== 'success') {
+                        throw new Error(data.error || 'Batch generation failed');
+                    }
+                    const okItems = (data.results || []).filter(r => r.status === 'success' && r.image_url);
+                    okItems.forEach(item => {
+                        addToHistory(
+                            {
+                                ...state,
+                                topic: item.prompt,
+                                mode: item.mode || state.mode,
+                                map_type: item.map_type || state.map_type,
+                                gsm: item.gsm ?? state.gsm,
+                                extra_option: item.extra_option || state.extra_option,
+                                model: item.model || state.model,
+                                provider: item.provider || modelProvider(item.model || state.model),
+                                font: item.font || state.font,
+                                palette_theme: item.palette_theme || state.palette_theme,
+                                temperature: item.temperature ?? state.temperature,
+                            },
+                            `[batch] ${item.filename}`,
+                            {
+                                image_url: item.image_url,
+                                analysis: item.analysis || null,
+                                map_values: item.map_values || null,
+                            }
+                        );
+                        logToConsole(`[Batch ${item.index}/${data.total}] Generated "${item.prompt}" -> ${item.filename}`, 'success');
+                    });
+                    (data.results || []).filter(r => r.status !== 'success').forEach(item => {
+                        logToConsole(`[Batch ${item.index}/${data.total}] Failed "${item.prompt}": ${item.error}`, 'warn');
+                    });
+                    updateProgress(data.total || okItems.length, data.total || okItems.length, `Done (${data.succeeded}/${data.total})`);
+                    renderBatchResultsPanel(okItems);
+                    if (okItems.length > 0) {
+                        selectBatchResult(okItems.length - 1);
+                    }
+                    showToast(`Generated ${data.succeeded}/${data.total} maps from "${loadedIdeasFile.filename}"!`, 'success');
+                    return;
+                }
+
+                updateProgress(0, 1, 'Parsing CSV...');
+                const parseRes = await fetch('/api/parse_batch_csv', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        ...state,
                         filename: loadedIdeasFile.filename,
                         ideas_text: loadedIdeasFile.text
                     })
                 });
-                const data = await res.json();
-                if (!res.ok || data.status !== 'success') {
-                    throw new Error(data.error || 'Batch generation failed');
+                const parseData = await parseRes.json();
+                if (!parseRes.ok || parseData.status !== 'success') {
+                    throw new Error(parseData.error || 'Failed to parse CSV');
                 }
 
-                const okItems = (data.results || []).filter(r => r.status === 'success' && r.image_url);
-                okItems.forEach(item => {
-                    addToHistory(
-                        {
+                const ideas = parseData.ideas || [];
+                const total = ideas.length;
+                let completed = 0;
+                let succeeded = 0;
+                const results = new Array(total);
+                updateProgress(0, total, `Starting ${total} maps (3 parallel)...`);
+
+                let nextIdx = 0;
+                const workerCount = Math.min(3, total);
+                const workers = Array.from({ length: workerCount }, async () => {
+                    while (nextIdx < total) {
+                        const idx = nextIdx++;
+                        const idea = ideas[idx];
+                        const itemPayload = {
                             ...state,
-                            topic: item.prompt,
-                            mode: item.mode || state.mode,
-                            map_type: item.map_type || state.map_type,
-                            gsm: item.gsm ?? state.gsm,
-                            extra_option: item.extra_option || state.extra_option,
-                            model: item.model || state.model,
-                            provider: item.provider || modelProvider(item.model || state.model),
-                            font: item.font || state.font,
-                            palette_theme: item.palette_theme || state.palette_theme,
-                            temperature: item.temperature ?? state.temperature,
-                        },
-                        `[batch] ${item.filename}`,
-                        {
-                            image_url: item.image_url,
-                            analysis: item.analysis || null,
-                            map_values: item.map_values || null,
+                            topic: idea.prompt,
+                            mode: idea.mode || state.mode,
+                            map_type: idea.map_type || state.map_type,
+                            gsm: idea.gsm ?? state.gsm,
+                            extra_option: idea.extra_option || state.extra_option,
+                            model: idea.model || state.model,
+                            provider: modelProvider(idea.model || state.model),
+                            font: idea.font || state.font,
+                            palette_theme: idea.palette_theme || state.palette_theme,
+                        };
+                        try {
+                            const res = await fetch('/api/generate', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(itemPayload)
+                            });
+                            const data = await res.json();
+                            if (!res.ok || data.status !== 'success') {
+                                throw new Error(data.error || 'Generation failed');
+                            }
+                            succeeded++;
+                            const filename = idea.output || `${String(idx + 1).padStart(2, '0')}.png`;
+                            const itemResult = {
+                                index: idx + 1,
+                                status: 'success',
+                                prompt: idea.prompt,
+                                filename,
+                                image_url: data.image_url,
+                                analysis: data.analysis || null,
+                                map_values: data.map_values || null,
+                                ...itemPayload,
+                            };
+                            results[idx] = itemResult;
+                            addToHistory(itemPayload, `[batch] ${filename}`, {
+                                image_url: data.image_url,
+                                analysis: data.analysis || null,
+                                map_values: data.map_values || null,
+                            });
+                            logToConsole(`[Batch ${idx + 1}/${total}] Generated "${idea.prompt}" -> ${filename}`, 'success');
+                        } catch (err) {
+                            results[idx] = { index: idx + 1, status: 'error', prompt: idea.prompt, error: err.message };
+                            logToConsole(`[Batch ${idx + 1}/${total}] Failed "${idea.prompt}": ${err.message}`, 'warn');
+                        } finally {
+                            completed++;
+                            updateProgress(completed, total, `${completed}/${total} maps (${succeeded} ok)`);
                         }
-                    );
-                    logToConsole(`[Batch ${item.index}/${data.total}] Generated "${item.prompt}" -> ${item.filename}`, 'success');
-                });
-                (data.results || []).filter(r => r.status !== 'success').forEach(item => {
-                    logToConsole(`[Batch ${item.index}/${data.total}] Failed "${item.prompt}": ${item.error}`, 'warn');
+                    }
                 });
 
+                await Promise.all(workers);
+
+                const okItems = results.filter(r => r && r.status === 'success' && r.image_url);
                 renderBatchResultsPanel(okItems);
                 if (okItems.length > 0) {
                     selectBatchResult(okItems.length - 1);
                 }
-                showToast(`Generated ${data.succeeded}/${data.total} maps from "${loadedIdeasFile.filename}"!`, 'success');
+                showToast(`Generated ${succeeded}/${total} maps from "${loadedIdeasFile.filename}"!`, 'success');
             } catch (err) {
                 logToConsole(`[Batch Error] ${err.message}`, 'error');
                 showToast(err.message || 'Batch generation failed', 'error');
