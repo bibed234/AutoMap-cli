@@ -49,10 +49,10 @@ def test_download_stores_mp3_and_cleans_temporary_files(worker, monkeypatch, tmp
     run = Mock(side_effect=lambda *args, **kwargs: (download / 'track.mp3').write_bytes(b'mp3-data'))
     monkeypatch.setattr(worker.subprocess, 'run', run)
     monkeypatch.setattr(worker, '_get_song_title', lambda url: title)
-    monkeypatch.setattr(worker.uuid, 'uuid4', lambda: 'fallback-id')
+    monkeypatch.setattr(worker.uuid, 'uuid4', lambda: Mock(hex='0123456789abcdef'))
     response = worker.app.test_client().post('/api/music_download/', json={'url': ' https://example.test/song '})
     assert response.status_code == 200, response.json
-    expected_title = 'A_nice___song_' if title else 'fallback-id'
+    expected_title = ('A_nice___song_' if title else 'downloaded_audio') + '_0123456789ab'
     assert response.json['title'] == expected_title
     assert base64.b64decode(response.json['file']) == b'mp3-data'
     assert (Path(worker.DOWNLOADS) / f'{expected_title}.mp3').read_bytes() == b'mp3-data'
@@ -93,7 +93,8 @@ def test_download_moves_audio_across_filesystems(worker, monkeypatch, tmp_path):
     monkeypatch.setattr(worker.os, 'rename', Mock(side_effect=OSError(errno.EXDEV, 'Invalid cross-device link')))
     response = worker.app.test_client().post('/api/music_download', json={'url': 'https://example.test/song'})
     assert response.status_code == 200, response.json
-    assert (Path(worker.DOWNLOADS) / 'Selected_song.mp3').read_bytes() == b'audio-data'
+    assert response.json['title'].startswith('Selected_song_')
+    assert (Path(worker.DOWNLOADS) / (response.json['title'] + '.mp3')).read_bytes() == b'audio-data'
     assert base64.b64decode(response.json['file']) == b'audio-data'
     assert not download.exists()
 

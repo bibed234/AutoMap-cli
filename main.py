@@ -21,7 +21,6 @@ If it is missing, ``/api/status`` reports it and the UI shows a key input, whose
 value is forwarded to the generation request only.
 """
 
-import ast
 import base64
 import io
 import os
@@ -50,11 +49,13 @@ from map.auto_map import (
     auto_map,
     _auto_fill_from_ai,
     _parse_short_number,
+    _parse_filling_overrides,
     _resolve_theme_name,
     _to_rgba_tuple,
 )
 from map.constants import europe_coords, world_coords
-from map.functions import parse_ideas_content, slugify_prompt, validate_temperature
+from cli import AVAILABLE_MODELS
+from map.functions import AIServiceError, parse_ideas_content, slugify_prompt, validate_temperature
 
 from flask import Flask, request, jsonify, send_file, render_template, Response
 
@@ -196,11 +197,11 @@ def _build_analysis_from_ai(
 ) -> dict[str, object]:
     """Build UI-friendly color rules and stats from AI map values or render metadata."""
     vals = [v for v in ai_answer.values() if v is not None and str(v).strip() != ""]
-    num_vals: list[int] = []
+    num_vals: list[float] = []
     for v in vals:
         parsed = _parse_short_number(v)
         if parsed is not None:
-            num_vals.append(int(round(parsed)))
+            num_vals.append(parsed)
 
     resolved_mode = mode if mode in ("number", "text") else (
         "number" if vals and len(num_vals) >= max(1, int(len(vals) * 0.6)) else "text"
@@ -223,16 +224,7 @@ def _build_analysis_from_ai(
                     txt_dict[str(k)] = rgba
         raw_num = render_meta.get("used_num") or render_meta.get("filling_num")
         if isinstance(raw_num, dict) and raw_num:
-            for k, v in raw_num.items():
-                rgba = _to_rgba_tuple(v)
-                if rgba is None:
-                    continue
-                try:
-                    b = k if isinstance(k, tuple) else ast.literal_eval(str(k))
-                    if isinstance(b, (list, tuple)) and len(b) == 2:
-                        num_dict[(int(float(b[0])), int(float(b[1])))] = rgba
-                except (ValueError, SyntaxError, TypeError):
-                    continue
+            _, num_dict = _parse_filling_overrides(None, raw_num)
 
     if not txt_dict and not num_dict:
         txt_dict, num_dict = _auto_fill_from_ai(
@@ -452,7 +444,7 @@ def generate():
         f"python cli.py make \"{data.get('topic', '')}\" "
         f"-m {data.get('mode', 'text')} -mp {data.get('map_type', 'default')} "
         f"-gsm {gsm} -eop {data.get('extra_option', 'none')} "
-        f"--model {data.get('model', 'gemini-2.5-flash')} --font \"{font_name}\""
+        f"--model {data.get('model', AVAILABLE_MODELS[0])} --font \"{font_name}\""
     )
     if temperature_options:
         command += f" --temperature {temperature_options['temperature']:g}"
@@ -483,6 +475,8 @@ def generate():
             **temperature_options,
             **style_kwargs,
         )
+    except AIServiceError as error:
+        return jsonify(status='error', command=command, error=str(error)), error.status_code
     except KeyError as e:
         return jsonify({"status": "error", "command": command,
                         "error": f"Missing field: {e}"}), 400
@@ -529,7 +523,10 @@ def list_available_models():
         return jsonify({"status": "error", "error": "API key required.", "models": []}), 400
     try:
         from google import genai
-        client = genai.Client(api_key=key)
+        from google.genai import types
+        client = genai.Client(api_key=key, http_options=types.HttpOptions(
+            timeout=15_000, retry_options=types.HttpRetryOptions(attempts=1),
+        ))
         models: list[str] = []
         for m in client.models.list():
             name = getattr(m, "name", "") or ""
@@ -541,7 +538,10 @@ def list_available_models():
             low = name.lower()
             if not (low.startswith("gemini") or low.startswith("gemma")):
                 continue
-            if any(skip in low for skip in ("embedding", "imagen", "veo", "tts", "aqa", "robotics", "computer-use")):
+            if any(skip in low for skip in (
+                "embedding", "imagen", "veo", "tts", "aqa", "robotics", "computer-use",
+                "image", "nano-banana", "omni", "transcribe", "live", "native-audio", "decision",
+            )):
                 continue
             models.append(name)
         return jsonify({"status": "success", "models": sorted(set(models), reverse=True)})
@@ -595,7 +595,7 @@ def generate_batch():
     default_font, default_eop, default_gsm = _parse_render_params(data)
     default_mode = str(data.get("mode") or "text").lower()
     default_map_type = str(data.get("map_type") or "default").lower()
-    default_model = str(data.get("model") or "gemini-2.5-flash")
+    default_model = str(data.get("model") or AVAILABLE_MODELS[0])
     available_fonts = set(_available_fonts())
 
     temperature_options: dict[str, object] = {}
@@ -740,7 +740,7 @@ def api_restyle_map():
             map_type=map_type,
             size_mod=gsm,
             optional_feature=extra_option,
-            model=str(data.get("model") or "gemini-2.5-flash"),
+            model=str(data.get("model") or AVAILABLE_MODELS[0]),
             font_name=font_name,
             show_result=False,
             io_res=True,

@@ -207,9 +207,18 @@ def _to_rgba_tuple(val: object) -> tuple[int, int, int, int] | None:
 def _parse_filling_overrides(
     raw_txt: object,
     raw_num: object,
-) -> tuple[dict[str, tuple[int, int, int, int]], dict[tuple[int, int], tuple[int, int, int, int]]]:
+) -> tuple[dict[str, tuple[int, int, int, int]], dict[tuple[float, float], tuple[int, int, int, int]]]:
     txt_out: dict[str, tuple[int, int, int, int]] = {}
-    num_out: dict[tuple[int, int], tuple[int, int, int, int]] = {}
+    num_out: dict[tuple[float, float], tuple[int, int, int, int]] = {}
+
+    def add_range(low, high, rgba):
+        if isinstance(low, bool) or isinstance(high, bool):
+            return
+        low, high = float(low), float(high)
+        if math.isfinite(low) and math.isfinite(high) and low < high:
+            # Keep integer keys stable in metadata without truncating fractions.
+            bounds = tuple(int(v) if v.is_integer() else v for v in (low, high))
+            num_out[bounds] = rgba
     if isinstance(raw_txt, dict):
         for k, v in raw_txt.items():
             key_str = str(k).strip()
@@ -224,7 +233,7 @@ def _parse_filling_overrides(
             try:
                 bounds = k if isinstance(k, tuple) else ast.literal_eval(str(k))
                 if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
-                    num_out[(int(float(bounds[0])), int(float(bounds[1])))] = rgba
+                    add_range(bounds[0], bounds[1], rgba)
             except (ValueError, SyntaxError, TypeError, OverflowError):
                 continue
     elif isinstance(raw_num, list):
@@ -235,7 +244,7 @@ def _parse_filling_overrides(
             if rgba is None:
                 continue
             try:
-                num_out[(int(float(item["low"])), int(float(item["high"])))] = rgba
+                add_range(item["low"], item["high"], rgba)
             except (KeyError, ValueError, TypeError, OverflowError):
                 continue
     return txt_out, num_out
@@ -268,34 +277,40 @@ def _auto_fill_from_ai(
     mode: str,
     palette_theme: str = "auto",
     prompt: str = "",
-) -> tuple[dict[str, tuple[int, int, int, int]], dict[tuple[int, int], tuple[int, int, int, int]]]:
+) -> tuple[dict[str, tuple[int, int, int, int]], dict[tuple[float, float], tuple[int, int, int, int]]]:
     """Inspect AI response values (numbers, short-form numbers, or words) and pick colors."""
     auto_txt: dict[str, tuple[int, int, int, int]] = {}
-    auto_num: dict[tuple[int, int], tuple[int, int, int, int]] = {}
+    auto_num: dict[tuple[float, float], tuple[int, int, int, int]] = {}
     resolved = _resolve_theme_name(palette_theme, prompt=prompt, mode=mode)
     palette = _PALETTE_THEMES.get(resolved, _AUTO_PALETTE)
     use_semantic = (palette_theme or "auto").strip().lower() == "auto"
 
     if mode == "number":
-        nums: list[int] = []
+        nums: list[float] = []
         for val in ai_answer.values():
             parsed = _parse_short_number(val)
             if parsed is not None:
-                nums.append(int(round(parsed)))
+                nums.append(parsed)
         if nums:
             nums.sort()
             unique_nums = sorted(set(nums))
             low_start = min(0, nums[0] - 1) if nums[0] <= 10 else nums[0] - 1
+            if low_start >= nums[0]:
+                low_start = math.nextafter(nums[0], -math.inf)
             if len(unique_nums) <= 5:
                 bounds = [low_start] + unique_nums
                 buckets = len(unique_nums)
             else:
-                buckets = 5
-                bounds = [low_start]
-                for i in range(1, buckets):
-                    q = nums[int(round((len(nums) - 1) * (i / buckets)))]
-                    bounds.append(max(bounds[-1] + 1, q))
-                bounds.append(max(bounds[-1] + 1, nums[-1]))
+                # Quantiles can repeat when countries share a measurement.
+                # Deduplicate thresholds instead of adding 1, which erases
+                # sub-unit differences and can push bounds above the maximum.
+                thresholds = {
+                    nums[int(round((len(nums) - 1) * (i / 5)))]
+                    for i in range(1, 5)
+                }
+                bounds = [low_start] + sorted(thresholds - {nums[-1]}) + [nums[-1]]
+                buckets = len(bounds) - 1
+            bounds = [int(v) if math.isfinite(v) and float(v).is_integer() else v for v in bounds]
             for i in range(buckets):
                 auto_num[(bounds[i], bounds[i + 1])] = palette[i % len(palette)]
     else:
@@ -337,14 +352,8 @@ def _numeric_extrema(values):
     """Return region names for finite numeric extrema, or None if absent."""
     numeric = {}
     for name, value in values.items():
-        # bool converts to 0/1 in Python, but is not a numeric measurement here.
-        if isinstance(value, bool):
-            continue
-        try:
-            number = float(value)
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if math.isfinite(number):
+        number = _parse_short_number(value)
+        if number is not None:
             numeric[name] = number
     if not numeric:
         return None
@@ -533,7 +542,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
     total = len(dict_)
     log.step(f"Painting {total} regions")
     used_txt_rules: dict[str, tuple[int, int, int, int]] = {}
-    used_num_rules: dict[tuple[int, int], tuple[int, int, int, int]] = {}
+    used_num_rules: dict[tuple[float, float], tuple[int, int, int, int]] = {}
 
     ai_answer_norm = {
         str(k).strip().lower().replace(" ", "_").replace("-", "_"): v
@@ -549,8 +558,7 @@ def auto_map(prompt: str, mode: str, map_type: str, size_mod: int,
             try:
                 info = ai_answer_norm[name_key]
                 color = (random.randint(80, 255), random.randint(80, 255), random.randint(80, 255), 255)
-                parsed_value = _parse_short_number(info)
-                num_value = int(round(parsed_value)) if parsed_value is not None else None
+                num_value = _parse_short_number(info)
                 if num_value is None:
                     log.warning(f"Non-numeric value for {name}: {info!r}; using random color")
 

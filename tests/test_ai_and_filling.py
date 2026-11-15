@@ -46,7 +46,10 @@ def test_ai_client_and_prompt(monkeypatch, mode, region, key):
     client = Mock(return_value=SimpleNamespace(models=SimpleNamespace(generate_content=generate)))
     monkeypatch.setattr(functions.genai, 'Client', client)
     assert functions._ai_request('Population', mode, 'test-model', key) == '{"a":1}'
-    client.assert_called_once_with(**({'api_key': key} if key else {}))
+    options = client.call_args.kwargs
+    assert options['http_options'].timeout == functions.AI_TIMEOUT_MS
+    assert options['http_options'].retry_options.attempts == 1
+    assert options.get('api_key') == key
     kwargs = generate.call_args.kwargs
     assert kwargs['model'] == 'test-model'
     assert 'Population' in kwargs['contents'] and region in kwargs['contents']
@@ -96,3 +99,36 @@ def test_empty_or_invalid_filling(monkeypatch, tmp_path, content):
 def test_missing_filling(monkeypatch, tmp_path):
     monkeypatch.setattr(functions, '__file__', str(tmp_path / 'functions.py'))
     assert functions.load_filling() == ({}, {})
+
+
+def test_missing_filling_uses_bundled_template(monkeypatch, tmp_path):
+    monkeypatch.setattr(functions, '__file__', str(tmp_path / 'functions.py'))
+    (tmp_path / 'filling.template.json').write_text(json.dumps({
+        'filling_num': {'(0.1, 0.4)': [4, 5, 6, 255]},
+    }))
+    assert functions.load_filling() == ({}, {(0.1, 0.4): (4, 5, 6, 255)})
+
+
+@pytest.mark.parametrize('code,status,phrase', [
+    (503, 503, 'overloaded'), (429, 429, 'quota'), (404, 400, 'model access'),
+])
+def test_ai_service_errors_are_actionable(monkeypatch, code, status, phrase):
+    from google.genai import errors
+    failure = errors.APIError(code, {'error': {'message': 'Upstream error', 'code': code}})
+    generate = Mock(side_effect=failure)
+    monkeypatch.setattr(functions.genai, 'Client', Mock(return_value=SimpleNamespace(
+        models=SimpleNamespace(generate_content=generate))))
+    with pytest.raises(functions.AIServiceError, match=phrase) as caught:
+        functions.ai_request('topic', 'default', 'busy-model')
+    assert caught.value.status_code == status
+    generate.assert_called_once()
+
+
+def test_ai_timeout_has_a_bounded_wait_and_actionable_error(monkeypatch):
+    generate = Mock(side_effect=functions.httpx.ReadTimeout('timed out'))
+    monkeypatch.setattr(functions.genai, 'Client', Mock(return_value=SimpleNamespace(
+        models=SimpleNamespace(generate_content=generate))))
+    with pytest.raises(functions.AIServiceError, match='45 seconds') as caught:
+        functions.ai_request('topic', 'default', 'slow-model')
+    assert caught.value.status_code == 504
+    generate.assert_called_once()

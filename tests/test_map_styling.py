@@ -92,6 +92,32 @@ def test_short_form_text_palette_keeps_unknown_labels_as_separate_categories():
     assert rules['unknown'] not in (rules['1k'], rules['3k'])
 
 
+@pytest.mark.parametrize('values', [
+    [0.1, 0.4],
+    [i / 10 for i in range(-3, 12)],
+    [0.1] * 20 + [0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+])
+def test_fractional_numeric_palette_covers_values_without_rounding(values):
+    _, rules = renderer._auto_fill_from_ai(dict(enumerate(values)), 'number')
+    colors = []
+    for value in values:
+        matches = [color for (lo, hi), color in rules.items() if lo < value <= hi]
+        assert len(matches) == 1
+        colors.append(matches[0])
+    assert len(set(colors)) >= 2
+    assert max(hi for lo, hi in rules) == max(values)
+
+
+@pytest.mark.parametrize('raw', [
+    {'(0.1, 0.4)': '#112233'},
+    [{'low': '0.1', 'high': '0.4', 'color': '#112233'}],
+])
+def test_numeric_overrides_preserve_fractional_bounds(raw):
+    assert renderer._parse_filling_overrides(None, raw)[1] == {
+        (0.1, 0.4): (17, 34, 51, 255),
+    }
+
+
 def test_analysis_preserves_actual_render_rules_and_skips_malformed_metadata(web):
     analysis = web._build_analysis_from_ai({'a': '2.5M', 'b': 10}, mode='number', render_meta={
         'resolved_theme': 'heatmap',

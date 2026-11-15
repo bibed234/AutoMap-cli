@@ -85,8 +85,9 @@ To get started with **AutoMap**, follow these steps:
 
    On Windows/macOS you can also use the helper scripts in `util/` (`key_man.bat`, `key_man.command`) to manage the key.
 
-5. **Create your filling configuration:**
-   Copy the template so colours can be applied:
+5. **Optionally customize your filling configuration:**
+   The bundled template is used automatically when `map/filling.json` is absent.
+   Copy it to override the default rules:
    ```bash
    cp map/filling.template.json map/filling.json
    ```
@@ -107,7 +108,21 @@ With `SERVER=TRUE`, sign in with `deltaaa` / `deltaaa00!`, or set `WEB_LOGIN` an
 
 The entered Google API key, last map topic, and palette are remembered in the same browser. Browser storage must remain enabled to keep these preferences between visits.
 
+Open **Theme & Style** in the left panel to choose a map palette in Color Filling
+Studio. Selecting a batch result restores that map's generation settings before
+you repaint it.
+
+The model list is refreshed for your API key, with an updated offline fallback
+list shared by the web interface and CLI. The default is `gemini-3.8-flash`.
+AI generation uses a 45-second request timeout without automatic retries. If a
+model is overloaded, rate-limited, or times out, the page displays the reason and
+lets you retry or choose another model. Drawing the map takes additional time.
+
 In Video Studio, use **Or upload your own music** to select an MP3, WAV, M4A, AAC, OGG or FLAC file up to 10 MB. The track is converted to MP3 and can be previewed, cut or used directly in the rendered video. The source track and selected cut are saved in this browser so they remain available after reopening the studio.
+
+Music downloaded from a URL must also fit the 10 MiB MP3 limit. Larger tracks
+are rejected immediately; select a shorter track. Each download has its own ID,
+so matching song titles cannot overwrite another track or reuse an older cut.
 
 ### Running on a server
 

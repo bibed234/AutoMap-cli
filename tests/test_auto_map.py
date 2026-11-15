@@ -110,6 +110,39 @@ def test_short_form_changes_ai_prompt(scene):
     assert '1000000=1M' in answer.call_args.args[0]
 
 
+def test_fractional_measurements_use_actual_range_at_integer_boundary(scene):
+    answer, _, real_open = scene
+    answer.return_value = {'one': 100.4, 'two': 100}
+    image = real_open(render(
+        mode='number', auto_style=False,
+        filling_num_override={'(0, 100)': '#ff0000', '(100, 200)': '#0000ff'},
+    ))
+    assert image.getpixel((80, 600)) == (0, 0, 255, 255)
+    assert image.getpixel((290, 600)) == (255, 0, 0, 255)
+
+
+def test_fractional_manual_ranges_are_used_in_pixels_and_metadata(scene):
+    answer, _, real_open = scene
+    answer.return_value = {'one': 0.2, 'two': 0.6}
+    output = render(
+        mode='number', auto_style=False,
+        filling_num_override={'(0.1, 0.4)': '#ff0000', '(0.4, 0.8)': '#0000ff'},
+    )
+    image = real_open(output)
+    assert image.getpixel((80, 600)) == (255, 0, 0, 255)
+    assert image.getpixel((290, 600)) == (0, 0, 255, 255)
+    assert output.map_meta['used_num'] == {
+        '(0.1, 0.4)': [255, 0, 0, 255], '(0.4, 0.8)': [0, 0, 255, 255],
+    }
+
+
+def test_fractional_measurements_get_distinct_automatic_colors(scene):
+    answer, _, real_open = scene
+    answer.return_value = {'one': 0.1, 'two': 0.4}
+    image = real_open(render(mode='number', auto_style=True))
+    assert image.getpixel((80, 600)) != image.getpixel((290, 600))
+
+
 @pytest.mark.parametrize('mode,map_type,feature', [
     ('number', 'default', 'short_form'), ('text', 'default', 'show_most_least'),
     ('number', 'world', 'show_most_least'),

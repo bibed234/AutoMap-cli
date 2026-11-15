@@ -429,3 +429,41 @@ def test_topic_preview_is_explicitly_identified_as_sample_data(web, mode):
     assert response.json['map_values']
 
 
+
+
+@pytest.mark.parametrize('code,phrase', [(503, 'overloaded'), (429, 'quota'), (504, '45 seconds')])
+def test_generate_displays_upstream_service_reason(web, monkeypatch, generation_request, code, phrase):
+    from map.functions import AIServiceError
+    monkeypatch.setattr(web, 'auto_map', Mock(side_effect=AIServiceError(phrase, code)))
+    response = web.app.test_client().post('/api/generate', json=generation_request)
+    assert response.status_code == code
+    assert response.json['error'] == phrase
+
+
+def test_analysis_preserves_fractional_values_and_rendered_bounds(web):
+    analysis = web._build_analysis_from_ai(
+        {'ukraine': 0.1, 'poland': 0.4}, mode='number',
+        render_meta={'used_num': {'(0.1, 0.4)': (12, 34, 56, 255)}},
+    )
+    assert analysis['ui_num_rules'] == [{'low': 0.1, 'high': 0.4, 'hex': '#0c2238', 'alpha': 255}]
+    assert analysis['stats']['min_value'] == 0.1
+    assert analysis['stats']['max_value'] == 0.4
+
+
+def test_model_discovery_excludes_non_text_models_and_keeps_new_versions(web, monkeypatch):
+    from types import SimpleNamespace
+    from google import genai
+    names = [
+        'gemini-4-hydrogen', 'gemini-3.8-flash', 'gemma-4-31b-it',
+        'gemini-3.8-flash-image', 'gemini-live', 'gemini-native-audio',
+        'gemini-transcribe', 'gemini-omni-preview', 'gemini-decision',
+        'gemini-embedding',
+    ]
+    listing = [SimpleNamespace(name='models/' + name, supported_actions=['generateContent']) for name in names]
+    listing.append(SimpleNamespace(name='models/gemini-non-generative', supported_actions=['embedContent']))
+    client = Mock(return_value=SimpleNamespace(models=SimpleNamespace(list=lambda: listing)))
+    monkeypatch.setattr(genai, 'Client', client)
+    result = web.app.test_client().post('/api/models', json={'api_key': 'test'})
+    assert result.status_code == 200
+    assert set(result.json['models']) == {'gemini-4-hydrogen', 'gemini-3.8-flash', 'gemma-4-31b-it'}
+    assert client.call_args.kwargs['http_options'].timeout == 15000

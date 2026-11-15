@@ -232,17 +232,6 @@
                     <span id="headerApiText" class="font-mono text-[11px]">System Ready</span>
                 </div>
 
-                <!-- Color Filling Studio Button -->
-                <button type="button" onclick="openFillingStudio()" class="px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800/90 text-slate-200 border border-slate-700/80 hover:border-indigo-500/50 text-xs font-medium transition-all flex items-center gap-2 shadow-sm group">
-                    <span class="flex -space-x-1">
-                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-1 ring-slate-950"></span>
-                        <span class="w-2.5 h-2.5 rounded-full bg-indigo-400 ring-1 ring-slate-950"></span>
-                        <span class="w-2.5 h-2.5 rounded-full bg-rose-400 ring-1 ring-slate-950"></span>
-                    </span>
-                    <span class="hidden sm:inline">Color Filling Studio</span>
-                    <code class="text-[10px] font-mono text-indigo-300 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20 hidden lg:inline">filling.json</code>
-                </button>
-
                 <!-- Video Studio Navigation Link -->
                 <a href="/studio" class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-rose-600/90 to-orange-600/90 hover:from-rose-500 hover:to-orange-500 text-white text-xs font-semibold shadow-lg shadow-rose-600/20 hover:shadow-rose-600/35 border border-white/10 transition-all flex items-center gap-2 group">
                     <i class="fa-solid fa-clapperboard text-xs transition-transform group-hover:rotate-6"></i>
@@ -567,14 +556,16 @@
                                     <select id="modelSelect" onchange="updateCommandPreview()" 
                                         class="w-full appearance-none px-3 py-2.5 bg-slate-950/90 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-indigo-500 transition pr-7 truncate">
                                         <option value="gemini-3.8-flash">gemini-3.8-flash</option>
+                                        <option value="gemini-4-hydrogen">gemini-4-hydrogen</option>
+                                        <option value="gemini-4-carbon">gemini-4-carbon</option>
+                                        <option value="gemini-4-argon">gemini-4-argon</option>
+                                        <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+                                        <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+                                        <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
                                         <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
-                                        <option value="gemma-3-27b-it">gemma-3-27b-it</option>
-                                        <option value="gemma-3-12b-it">gemma-3-12b-it</option>
-                                        <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                                        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-                                        <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                                        <option value="gemini-1.5-pro">gemini-1.5-pro</option>
-                                        <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                                        <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                                        <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+                                        <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
                                     </select>
                                     <i class="fa-solid fa-chevron-down absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 pointer-events-none"></i>
                                 </div>
@@ -631,14 +622,7 @@
                         <p id="aiTemperatureHint" class="text-[11px] text-slate-300 mt-2">Controls response randomness, not factual accuracy. Lower values do not prevent AI hallucinations.</p>
                     </div>
 
-                    <!-- Color Filling Studio Quick Preview Bar -->
-                    <div>
-                        <label for="mapPaletteThemeSelect" class="block text-xs font-medium text-slate-300 mb-1.5">Map Color Theme</label>
-                        <select id="mapPaletteThemeSelect" onchange="onPaletteThemeChange(this.value)" class="w-full px-3 py-2.5 bg-slate-950/90 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500">
-                            <option value="auto">Auto Smart Theme</option>
-                        </select>
-                        <p class="text-[11px] text-slate-400 mt-1">Applied when you generate the map.</p>
-                    </div>
+                    <!-- Color Filling Studio: single entry in the left panel -->
                     <div class="p-3 rounded-xl bg-slate-950/75 border border-slate-800/90 flex items-center justify-between gap-3">
                         <div class="min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
@@ -653,8 +637,8 @@
                                 <i class="fa-solid fa-wand-magic-sparkles text-[10px]"></i>
                                 <span>Auto</span>
                             </button>
-                            <button type="button" onclick="openFillingStudio()" class="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-indigo-600/20 text-indigo-300 border border-slate-700 hover:border-indigo-500/50 text-xs font-medium transition">
-                                Customize
+                            <button type="button" id="openFillingStudioBtn" onclick="openFillingStudio()" aria-controls="fillingStudioModal" class="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-indigo-600/20 text-indigo-300 border border-slate-700 hover:border-indigo-500/50 text-xs font-medium transition">
+                                Theme &amp; Style
                             </button>
                         </div>
                     </div>
@@ -664,6 +648,7 @@
                         <i id="generateBtnIcon" class="fa-solid fa-play transition-transform group-hover:translate-x-0.5"></i>
                         <span id="generateBtnText">Run CLI &amp; Generate Map</span>
                     </button>
+                    <p id="generationError" role="alert" class="hidden text-xs text-rose-300 bg-rose-950/50 border border-rose-500/30 rounded-xl p-3"></p>
                 </form>
             </div>
 
@@ -828,10 +813,6 @@
                                 <button type="button" onclick="applyPromptPreset('Population of European countries', 'number', 'default', 'show_most_least')" class="text-xs px-3 py-1.5 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 transition flex items-center gap-1.5">
                                     <i class="fa-solid fa-bolt text-amber-400 text-[10px]"></i>
                                     <span>Try Sample: Europe Population</span>
-                                </button>
-                                <button type="button" onclick="openFillingStudio()" class="text-xs px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700 transition flex items-center gap-1.5">
-                                    <i class="fa-solid fa-palette text-purple-400 text-[10px]"></i>
-                                    <span>Inspect Color Palette</span>
                                 </button>
                             </div>
                         </div>
@@ -1207,10 +1188,6 @@
                 // Keep the default when browser storage is unavailable.
             }
             restoreMapPaletteTheme();
-            const paletteSource = document.getElementById('fillingPaletteTheme');
-            const paletteSelect = document.getElementById('mapPaletteThemeSelect');
-            paletteSelect.replaceChildren(...Array.from(paletteSource.children, option => option.cloneNode(true)));
-            paletteSelect.value = paletteSource.value;
             updateCommandPreview();
             renderFillingStudio();
             // Discover real fonts from the backend on startup (silent — no toast)
@@ -1498,9 +1475,37 @@
             });
         }
 
+        function restoreBatchResultParameters(item) {
+            for (const name of ['mode', 'map_type', 'extra_option']) {
+                const input = Array.from(document.getElementsByName(name))
+                    .find(input => input.value === item[name]);
+                if (input) input.checked = true;
+            }
+            document.getElementById('topicInput').value = item.prompt || '';
+            if (item.gsm !== undefined) syncGsm(item.gsm);
+            for (const [field, id] of [['model', 'modelSelect'], ['font', 'fontSelect']]) {
+                if (!item[field]) continue;
+                const select = document.getElementById(id);
+                if (!Array.from(select.options).some(option => option.value === item[field])) {
+                    select.add(new Option(item[field], item[field]));
+                }
+                select.value = item[field];
+            }
+            if (item.temperature !== undefined) updateAiTemperature(item.temperature);
+            if (item.palette_theme) {
+                const palette = document.getElementById('fillingPaletteTheme');
+                palette.value = item.palette_theme;
+                saveBrowserValue(MAP_PALETTE_STORAGE_KEY, palette.value);
+            }
+            updateCommandPreview();
+        }
+
         function selectBatchResult(idx) {
             const item = lastBatchResults[idx];
             if (!item || !item.image_url) return;
+            // Repainting must use this result's geography and generation settings.
+            cancelPaletteAnalysis();
+            restoreBatchResultParameters(item);
             const imgEl = document.getElementById('serverMapImage');
             const emptyEl = document.getElementById('emptyState');
             if (imgEl) {
@@ -1832,36 +1837,19 @@
             const s3 = document.getElementById('loadStage3');
 
             const startTime = performance.now();
-            let currentStage = 1;
             clearInterval(loadingTimerInterval);
-
+            stepText.textContent = 'Waiting for the AI response and map rendering...';
             if (s1 && s2 && s3) {
                 s1.className = 'flex items-center justify-between text-indigo-300';
-                s1.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i> 1. AI Geospatial Query</span><span class="text-[10px]">Running</span>';
-                s2.className = 'flex items-center justify-between text-slate-500';
-                s2.innerHTML = '<span class="flex items-center gap-2"><i class="fa-regular fa-circle text-[10px]"></i> 2. Region Flood-Fill &amp; Palette</span><span class="text-[10px]">Pending</span>';
-                s3.className = 'flex items-center justify-between text-slate-500';
-                s3.innerHTML = '<span class="flex items-center gap-2"><i class="fa-regular fa-circle text-[10px]"></i> 3. Relief &amp; Typography Composite</span><span class="text-[10px]">Pending</span>';
+                s1.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i> AI query &amp; map rendering</span><span class="text-[10px]">Running</span>';
+                s2.className = 'hidden';
+                s3.className = 'hidden';
             }
-
             loadingTimerInterval = setInterval(() => {
-                const elapsedNum = (performance.now() - startTime) / 1000;
-                if (timerEl) timerEl.textContent = `${elapsedNum.toFixed(1)}s`;
-
-                if (elapsedNum >= 2.2 && currentStage < 2 && s1 && s2) {
-                    currentStage = 2;
-                    stepText.textContent = 'Flood-filling regions and applying palette rules...';
-                    s1.className = 'flex items-center justify-between text-emerald-400';
-                    s1.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-check check-pop-in text-[10px]"></i> 1. AI Geospatial Query</span><span class="text-[10px]">Done</span>';
-                    s2.className = 'flex items-center justify-between text-indigo-300';
-                    s2.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i> 2. Region Flood-Fill &amp; Palette</span><span class="text-[10px]">Running</span>';
-                } else if (elapsedNum >= 4.8 && currentStage < 3 && s2 && s3) {
-                    currentStage = 3;
-                    stepText.textContent = 'Compositing relief shading, borders & custom typography...';
-                    s2.className = 'flex items-center justify-between text-emerald-400';
-                    s2.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-check check-pop-in text-[10px]"></i> 2. Region Flood-Fill &amp; Palette</span><span class="text-[10px]">Done</span>';
-                    s3.className = 'flex items-center justify-between text-indigo-300';
-                    s3.innerHTML = '<span class="flex items-center gap-2"><i class="fa-solid fa-circle-notch fa-spin text-[10px]"></i> 3. Relief &amp; Typography Composite</span><span class="text-[10px]">Running</span>';
+                const elapsed = (performance.now() - startTime) / 1000;
+                if (timerEl) timerEl.textContent = `${elapsed.toFixed(1)}s`;
+                if (elapsed >= 15) {
+                    stepText.textContent = 'Still waiting for the server. The selected AI model may be busy.';
                 }
             }, 150);
         }
@@ -1889,6 +1877,7 @@
                 return;
             }
 
+            document.getElementById('generationError').classList.add('hidden');
             overlay.classList.remove('hidden');
             btn.disabled = true;
             btn.classList.add('opacity-70');
@@ -1953,7 +1942,10 @@
                 }
             } catch (error) {
                 logToConsole(`[API Error] ${error.message}`, 'error');
-                showToast("Map generation failed. Check console logs.", "error");
+                const errorPanel = document.getElementById('generationError');
+                errorPanel.textContent = error.message;
+                errorPanel.classList.remove('hidden');
+                showToast(error.message, 'error');
                 metaBadge.textContent = "Execution Error";
             } finally {
                 stopLoadingStages();
@@ -2045,7 +2037,6 @@
 
         function onPaletteThemeChange(theme = document.getElementById('fillingPaletteTheme').value) {
             document.getElementById('fillingPaletteTheme').value = theme;
-            document.getElementById('mapPaletteThemeSelect').value = theme;
             try {
                 localStorage.setItem(MAP_PALETTE_STORAGE_KEY,
                     document.getElementById('fillingPaletteTheme').value);
@@ -2277,7 +2268,7 @@
             btn.disabled = busy || paletteAnalysisPending || !paletteAnalysisReady;
             btn.setAttribute('aria-busy', String(busy));
             document.getElementById('fillingPaletteTheme').disabled = busy;
-            document.getElementById('mapPaletteThemeSelect').disabled = busy;
+            document.getElementById('openFillingStudioBtn').disabled = busy;
             document.getElementById('mapRepaintButtonLabel').textContent = busy
                 ? 'Re-painting…' : 'Apply & Re-Paint Current Map';
             document.getElementById('mapRepaintIcon').className = busy

@@ -43,9 +43,9 @@ def map_page(web):
             page.add_style_tag(content='.hidden {display:none!important}')
             page.evaluate('''({analysis, values}) => {
                 applyAnalysisToFillingStudio(analysis, values, false);
-                openFillingStudio();
             }''', {'analysis': web._build_analysis_from_ai(
                 VALUES, mode='text', palette_theme='heatmap'), 'values': VALUES})
+            page.click('#openFillingStudioBtn')
             yield page
             assert not errors, errors
         finally:
@@ -84,6 +84,22 @@ def test_auto_preview_is_not_reused_as_manual_generation_rules(map_page):
     assert payloads[0]['auto_style'] is False
     assert set(tuple(c) for c in payloads[0]['filling_txt'].values()) == {
         (56, 189, 248, 255), (14, 165, 233, 255)}
+
+
+def test_theme_editor_has_one_entry_in_left_panel(map_page):
+    page = map_page
+    buttons = page.locator('button[onclick="openFillingStudio()"]')
+    assert buttons.count() == 1
+    assert buttons.get_attribute('id') == 'openFillingStudioBtn'
+    left_panel = page.locator('main > section').first
+    assert left_panel.locator('#cliForm #openFillingStudioBtn').count() == 1
+    assert page.locator('#fillingPaletteTheme').count() == 1
+    assert page.locator('#fillingStudioModal #fillingPaletteTheme').count() == 1
+    assert page.locator('#mapPaletteThemeSelect').count() == 0
+    page.locator('#fillingStudioModal button[onclick="closeFillingStudio()"]').click()
+    assert page.locator('#fillingStudioModal').is_hidden()
+    buttons.click()
+    assert page.locator('#fillingStudioModal').is_visible()
 
 
 def test_latest_theme_wins_when_responses_arrive_out_of_order(map_page, web):
@@ -188,7 +204,6 @@ def test_selected_palette_survives_reload_and_is_used_for_next_generation(map_pa
     page.wait_for_function("!paletteAnalysisPending && lastMapAnalysis.resolved_theme === 'greens'")
     page.reload()
     assert page.locator('#fillingPaletteTheme').input_value() == 'greens'
-    assert page.locator('#mapPaletteThemeSelect').input_value() == 'greens'
     state = page.evaluate('getFormState()')
     assert state['palette_theme'] == 'greens'
     assert state['auto_style'] is True
@@ -215,13 +230,17 @@ def test_palette_selection_works_when_storage_is_blocked(map_page):
     assert page.evaluate('getFormState().palette_theme') == 'blues'
 
 
-def test_main_form_theme_is_sent_on_first_generation_without_customize(map_page):
+def test_theme_menu_selection_is_sent_on_first_generation(map_page):
     page = map_page
     page.reload()
     page.add_style_tag(content='.hidden {display:none!important}')
     assert page.locator('#fillingStudioModal').is_hidden()
-    page.select_option('#mapPaletteThemeSelect', 'greens')
+    page.click('#openFillingStudioBtn')
+    assert page.locator('#fillingStudioModal').is_visible()
+    page.select_option('#fillingPaletteTheme', 'greens')
     assert page.locator('#fillingPaletteTheme').input_value() == 'greens'
+    page.locator('#fillingStudioModal button[onclick="closeFillingStudio()"]').click()
+    assert page.locator('#fillingStudioModal').is_hidden()
     page.locator('#aiTemperature').press('Home')
     assert page.locator('#aiTemperatureValue').inner_text() == '0.00'
     page.fill('#topicInput', 'Population of Europe')
@@ -244,7 +263,7 @@ def test_main_form_theme_is_sent_on_first_generation_without_customize(map_page)
     assert payloads[0]['auto_style'] is True
     assert 'filling_txt' not in payloads[0]
     page.reload()
-    assert page.locator('#mapPaletteThemeSelect').input_value() == 'greens'
+    assert page.locator('#fillingPaletteTheme').input_value() == 'greens'
     assert page.locator('#aiTemperature').input_value() == '0'
     assert page.locator('#aiTemperatureValue').inner_text() == '0.00'
     assert '--temperature 0' in page.locator('#cliCommandDisplay').inner_text()
@@ -304,12 +323,15 @@ def test_api_key_and_topic_survive_reload_and_can_be_cleared(map_page):
     page.evaluate('closeFillingStudio()')
     page.locator('#apiKeyInput').fill('AIza-test-browser-key')
     page.locator('#topicInput').fill('Population of European countries')
-    page.select_option('#mapPaletteThemeSelect', 'oceanic')
+    page.click('#openFillingStudioBtn')
+    page.select_option('#fillingPaletteTheme', 'oceanic')
+    page.wait_for_function('!paletteAnalysisPending')
+    page.locator('#fillingStudioModal button[onclick="closeFillingStudio()"]').click()
     page.reload()
     assert page.locator('#apiKeyInput').input_value() == 'AIza-test-browser-key'
     assert page.locator('#apiKeyInput').get_attribute('type') == 'password'
     assert page.locator('#topicInput').input_value() == 'Population of European countries'
-    assert page.locator('#mapPaletteThemeSelect').input_value() == 'oceanic'
+    assert page.locator('#fillingPaletteTheme').input_value() == 'oceanic'
     page.locator('#apiKeyInput').fill('')
     page.evaluate('clearTopicInput()')
     page.reload()
@@ -327,3 +349,64 @@ def test_map_inputs_work_when_browser_storage_is_blocked(map_page):
     page.locator('#topicInput').fill('Test topic')
     assert page.evaluate('getFormState().api_key') == 'test-key'
     assert 'Test topic' in page.locator('#cliCommandDisplay').inner_text()
+
+
+def test_batch_selection_restores_parameters_before_repainting(map_page, web):
+    page = map_page
+    png = io.BytesIO()
+    Image.new('RGB', (2, 2), 'green').save(png, format='PNG')
+    world_values = {'china': 10, 'brazil': 20}
+    item = {
+        'index': 1, 'prompt': 'Population around the world', 'mode': 'number',
+        'map_type': 'world', 'gsm': 8, 'extra_option': 'short_form',
+        'model': 'custom-batch-model', 'font': 'DIN Condensed.ttf',
+        'temperature': 0.25, 'palette_theme': 'oceanic',
+        'image_url': 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode(),
+        'map_values': world_values,
+        'analysis': web._build_analysis_from_ai(world_values, mode='number', palette_theme='oceanic'),
+    }
+    analysis_requests = []
+    page.on('request', lambda request: analysis_requests.append(request.url)
+            if '/api/analyze_map' in request.url else None)
+    page.evaluate('''item => {
+        renderBatchResultsPanel([item]);
+        selectBatchResult(0);
+    }''', item)
+    state = page.evaluate('getFormState()')
+    for field in ('mode', 'map_type', 'gsm', 'extra_option', 'model', 'font',
+                  'temperature', 'palette_theme'):
+        assert state[field] == item[field]
+    assert state['topic'] == item['prompt']
+    assert not analysis_requests
+    assert '-mp world' in page.locator('#cliCommandDisplay').inner_text()
+
+    payloads = []
+
+    def repaint(route):
+        payloads.append(route.request.post_data_json)
+        route.fulfill(status=500, json={'status': 'error', 'error': 'Test repaint captured'})
+
+    page.route('**/api/restyle_map', repaint)
+    page.evaluate('restyleCurrentMapFromStudio()')
+    assert len(payloads) == 1
+    for field in ('mode', 'map_type', 'gsm', 'extra_option', 'model', 'font',
+                  'temperature', 'palette_theme'):
+        assert payloads[0][field] == item[field]
+    assert payloads[0]['topic'] == item['prompt']
+    assert payloads[0]['map_values'] == world_values
+
+
+def test_generation_failure_shows_actual_error_and_keeps_retry_available(map_page):
+    page = map_page
+    page.locator('#fillingStudioModal button[onclick="closeFillingStudio()"]').click()
+    page.fill('#topicInput', 'Population of Europe')
+    page.evaluate("document.getElementById('apiKeyInput').value = 'test-key-never-send'")
+    error = 'The AI model is overloaded. Please try again later.'
+    page.route('**/api/generate', lambda route: route.fulfill(
+        status=503, json={'status': 'error', 'error': error}))
+    page.click('#generateBtn')
+    page.wait_for_function("!document.getElementById('generateBtn').disabled")
+    assert page.locator('#generationError').is_visible()
+    assert error in page.locator('#generationError').inner_text()
+    assert error in page.locator('#toastMsg').inner_text()
+    assert page.locator('#generateBtn').is_enabled()

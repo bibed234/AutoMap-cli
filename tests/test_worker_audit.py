@@ -81,3 +81,66 @@ def test_render_rejects_garbage_after_base64_material(worker):
     })
     assert response.status_code == 400
     assert 'not valid base64' in response.json['error']
+
+
+@pytest.mark.parametrize('titles', [
+    ('Same title', 'Same title'),
+    ('Same / title', 'Same ? title'),
+    ('a' * 200 + 'first', 'a' * 200 + 'second'),
+])
+def test_download_identifiers_preserve_tracks_and_cuts_on_title_collisions(worker, monkeypatch, titles):
+    tracks = iter((b'first-track', b'second-track'))
+    temporary_folders = []
+
+    def download(command, **kwargs):
+        output = Path(command[command.index('-o') + 1].replace('%(ext)s', 'mp3'))
+        temporary_folders.append(output.parent)
+        output.write_bytes(next(tracks))
+
+    monkeypatch.setattr(worker.subprocess, 'run', Mock(side_effect=download))
+    monkeypatch.setattr(worker, '_get_song_title', Mock(side_effect=titles))
+    client = worker.app.test_client()
+    first = client.post('/api/music_download', json={'url': 'https://example.test/first'})
+    assert first.status_code == 200, first.json
+    first_title = first.json['title']
+    first_cut = Path(worker.CUT_DIR) / f'{first_title}_cut.mp3'
+    first_cut.write_bytes(b'first-cut')
+
+    second = client.post('/api/music_download', json={'url': 'https://example.test/second'})
+    assert second.status_code == 200, second.json
+    second_title = second.json['title']
+    assert first_title != second_title
+    assert (Path(worker.DOWNLOADS) / f'{first_title}.mp3').read_bytes() == b'first-track'
+    assert (Path(worker.DOWNLOADS) / f'{second_title}.mp3').read_bytes() == b'second-track'
+    assert first_cut.read_bytes() == b'first-cut'
+    assert not (Path(worker.CUT_DIR) / f'{second_title}_cut.mp3').exists()
+    assert all(not folder.exists() for folder in temporary_folders)
+
+
+@pytest.mark.parametrize('size', [3, 4])
+def test_download_size_limit_matches_audio_upload_and_releases_temporary_files(worker, monkeypatch, size):
+    monkeypatch.setattr(worker, 'MAX_MATERIAL_BYTES', 3)
+    temporary_folders = []
+
+    def download(command, **kwargs):
+        output = Path(command[command.index('-o') + 1].replace('%(ext)s', 'mp3'))
+        temporary_folders.append(output.parent)
+        output.write_bytes(b'x' * size)
+
+    monkeypatch.setattr(worker.subprocess, 'run', Mock(side_effect=download))
+    title_lookup = Mock(return_value='Track')
+    monkeypatch.setattr(worker, '_get_song_title', title_lookup)
+    response = worker.app.test_client().post('/api/music_download', json={'url': 'https://example.test/song'})
+    if size == 3:
+        assert response.status_code == 200, response.json
+        assert worker._decode_audio_payload(response.json['file']) == b'xxx'
+        assert len(list(Path(worker.DOWNLOADS).iterdir())) == 1
+    else:
+        assert response.status_code == 400, response.json
+        assert response.json['status'] == 'error'
+        assert '10 MB limit' in response.json['error']
+        assert 'shorter track' in response.json['error']
+        assert 'file' not in response.json
+        assert not list(Path(worker.DOWNLOADS).iterdir())
+        title_lookup.assert_not_called()
+    assert all(not folder.exists() for folder in temporary_folders)

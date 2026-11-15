@@ -249,16 +249,21 @@ def music_download():
             return jsonify({"status": "error",
                             "error": "yt-dlp ERROR: No mp3 file produced."}), 500
 
-        import uuid
-        title = _get_song_title(url) or str(uuid.uuid4())
-        title = _filename_stem(title)
-
+        if os.path.getsize(mp3_path) > MAX_MATERIAL_BYTES:
+            return jsonify(status='error', error='Downloaded audio exceeds the 10 MB limit. Choose a shorter track.'), 400
         with open(mp3_path, "rb") as fh:
-            base64_audio = base64.b64encode(fh.read()).decode("utf-8")
-            new_mp3_path = os.path.join(DOWNLOADS, f"{title}.mp3")
-            # Temporary downloads and persistent storage may be separate mounts.
-            # shutil.move falls back to copying when an atomic rename is unavailable.
-            shutil.move(mp3_path, new_mp3_path)
+            audio = fh.read(MAX_MATERIAL_BYTES + 1)
+        if len(audio) > MAX_MATERIAL_BYTES:
+            return jsonify(status='error', error='Downloaded audio exceeds the 10 MB limit. Choose a shorter track.'), 400
+
+        # Page titles are display labels, not unique track identifiers. Keep each
+        # download independent from previous tracks and their saved cuts.
+        title = f"{_filename_stem(_get_song_title(url) or 'downloaded_audio')}_{uuid.uuid4().hex[:12]}"
+        base64_audio = base64.b64encode(audio).decode("utf-8")
+        new_mp3_path = os.path.join(DOWNLOADS, f"{title}.mp3")
+        # Temporary downloads and persistent storage may be separate mounts.
+        # shutil.move falls back to copying when an atomic rename is unavailable.
+        shutil.move(mp3_path, new_mp3_path)
 
         return jsonify({
             "status": "success",

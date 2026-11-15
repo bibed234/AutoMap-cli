@@ -1,5 +1,7 @@
 import importlib
 import io
+import re
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -27,21 +29,40 @@ def test_make_defaults(generate):
     result = CliRunner().invoke(cli.main, ['make', 'Population'])
     assert result.exit_code == 0, result.output
     generate.assert_called_once_with(prompt='Population', mode='text', map_type='default',
-        size_mod=15, optional_feature=None, model='gemini-2.5-flash', font_name='Bips.ttf', show_result=False)
+        size_mod=15, optional_feature=None, model='gemini-3.8-flash', font_name='Bips.ttf', show_result=False)
 
 
 def test_make_options(generate, monkeypatch):
     monkeypatch.setenv('GEMINI_API_KEY', 'previous')
     result = CliRunner().invoke(cli.main, ['make', 'GDP', '-m', 'NUMBER', '-mp', 'WORLD',
         '-gsm', '22', '-eop', 'SHOW_MOST_LEAST', '--font', 'DIN Condensed.ttf',
-        '--model', 'gemini-2.5-pro', '--show', '--key', 'test-override', '-v'])
+        '--model', 'gemini-4-carbon', '--show', '--key', 'test-override', '-v'])
     assert result.exit_code == 0, result.output
     assert generate.call_args.kwargs == dict(prompt='GDP', mode='number', map_type='world',
-        size_mod=22, optional_feature='show_most_least', model='gemini-2.5-pro',
+        size_mod=22, optional_feature='show_most_least', model='gemini-4-carbon',
         font_name='DIN Condensed.ttf', show_result=True)
     assert log.is_verbose()
     import os
     assert os.environ['GEMINI_API_KEY'] == 'test-override'
+
+
+@pytest.mark.parametrize('model', [
+    'gemini-4-hydrogen', 'gemini-4-carbon', 'gemini-4-argon',
+    'gemma-4-31b-it', 'gemma-4-26b-a4b-it',
+])
+def test_current_gemini_and_gemma_models_reach_generation(generate, model):
+    result = CliRunner().invoke(cli.main, ['make', 'Population', '--model', model])
+    assert result.exit_code == 0, result.output
+    assert generate.call_args.kwargs['model'] == model
+
+
+def test_web_fallback_models_match_cli_choices():
+    html = (Path(__file__).resolve().parents[1] / 'templates' / 'index.html').read_text(encoding='utf-8')
+    selector = re.search(r'<select id="modelSelect"[^>]*>(.*?)</select>', html, re.DOTALL)
+    assert selector is not None
+    choices = re.findall(r'<option value="([^"]+)"', selector.group(1))
+    assert choices == cli.AVAILABLE_MODELS
+    assert not any(model.startswith(('gemini-1.5-', 'gemini-2.0-', 'gemini-2.5-')) for model in choices)
 
 
 @pytest.mark.parametrize('args', [

@@ -4,8 +4,13 @@ import json
 import math
 import re
 import sys
+try:
+    import httpx2 as httpx
+except ImportError:  # Older google-genai releases use the original transport.
+    import httpx
 from dotenv import load_dotenv
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pathlib import Path
 
@@ -13,6 +18,16 @@ from . import constants, log
 from ast import literal_eval
 
 load_dotenv(".env")  # loading .env file
+
+AI_TIMEOUT_MS = 45_000
+
+
+class AIServiceError(RuntimeError):
+    """An actionable upstream failure safe to display in the web interface."""
+
+    def __init__(self, message, status_code=503):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _error(title: str, message: str = ""):
@@ -65,7 +80,12 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> st
         with log.spinner("Waiting for AI response..."):
             # If a key was supplied (e.g. from the web UI when .env is missing),
             # use it for this request only; otherwise fall back to the env var.
-            client = genai.Client(api_key=api_key) if api_key else genai.Client()
+            options = {'http_options': types.HttpOptions(
+                timeout=AI_TIMEOUT_MS, retry_options=types.HttpRetryOptions(attempts=1),
+            )}
+            if api_key:
+                options['api_key'] = api_key
+            client = genai.Client(**options)
             request = client.models.generate_content(
                 model=ai_model,
                 contents=prompt_to_ai,
@@ -73,6 +93,28 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> st
             )
 
 
+    except genai_errors.APIError as error:
+        if error.code in (500, 502, 503, 504):
+            raise AIServiceError(
+                f'The selected model ({ai_model}) is overloaded or temporarily unavailable. '
+                'Please try again shortly or select another model.', 503,
+            ) from error
+        if error.code == 429:
+            raise AIServiceError(
+                'The AI request limit or quota has been reached. Please try again later '
+                'or check the quota for your API key.', 429,
+            ) from error
+        if error.code in (400, 401, 403, 404):
+            raise AIServiceError(
+                f'The selected model ({ai_model}) could not be used. '
+                'Refresh the model list and check your API key and model access.', 400,
+            ) from error
+        raise AIServiceError('The AI service could not complete this request. Please try again.') from error
+    except (httpx.TimeoutException, TimeoutError) as error:
+        raise AIServiceError(
+            'The AI model did not respond within 45 seconds. '
+            'Please try again or select a faster model.', 504,
+        ) from error
     except Exception as e:
         _error(f"AI request failed: {e}")
         return None
@@ -127,6 +169,8 @@ def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None
 def load_filling():
 
     path = Path(__file__).parent / "filling.json"
+    if not path.is_file():
+        path = path.with_name("filling.template.json")
 
     filling_txt = {}
     filling_num = {}

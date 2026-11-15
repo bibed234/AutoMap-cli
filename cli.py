@@ -19,13 +19,20 @@ import click
 
 FONTS_DIR = Path(__file__).parent / "resources" / "fonts"
 
-# Supported AI models. Extend this list when new models are provided.
+# General text-generation models verified against Google's model catalog and
+# deprecations on 2026-11-15: https://ai.google.dev/gemini-api/docs/models
 AVAILABLE_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-3.8-flash",
+    "gemini-4-hydrogen",
+    "gemini-4-carbon",
+    "gemini-4-argon",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
 ]
 
 
@@ -103,6 +110,7 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
     """
     # Lazy import so `automap --help` stays fast and doesn't require API keys.
     from map import log
+    from map.functions import AIServiceError
     from map.auto_map import auto_map
 
     ai_options = {}
@@ -124,17 +132,20 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
         os.environ["GEMINI_API_KEY"] = api_key
 
     # Click accepts mixed-case choices; the renderer compares lowercase names.
-    out_path = auto_map(
-        prompt=prompt,
-        mode=mode.lower(),
-        map_type=map_type.lower(),
-        size_mod=size_mod,
-        optional_feature=feature,
-        model=model,
-        font_name=font_name,
-        show_result=show_result,
-        **ai_options,
-    )
+    try:
+        out_path = auto_map(
+            prompt=prompt,
+            mode=mode.lower(),
+            map_type=map_type.lower(),
+            size_mod=size_mod,
+            optional_feature=feature,
+            model=model,
+            font_name=font_name,
+            show_result=show_result,
+            **ai_options,
+        )
+    except AIServiceError as error:
+        raise click.ClickException(str(error)) from error
 
     if out_path is None:
         # Convert renderer failures into a nonzero exit status for shell scripts.
@@ -194,6 +205,7 @@ def make(prompt, mode, map_type, size_mod, optional_feature, model, font_name, s
 def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, model, font_name, verbose, api_key):
     """Generate multiple maps from ideas listed in a .csv IDEAS_FILE."""
     from map import log
+    from map.functions import AIServiceError
     from map.auto_map import auto_map
     from map.functions import load_ideas_from_file, slugify_prompt
 
@@ -230,19 +242,23 @@ def batch(ideas_file, output_dir, mode, map_type, size_mod, optional_feature, mo
         if "palette_theme" in idea:
             style_options["palette_theme"] = idea["palette_theme"]
             style_options["auto_style"] = True
-        buffer = auto_map(
-            prompt=prompt,
-            mode=item_mode,
-            map_type=item_map_type,
-            size_mod=item_size_mod,
-            optional_feature=item_feature,
-            model=item_model,
-            font_name=item_font,
-            show_result=False,
-            io_res=True,
-            api_key=api_key,
-            **style_options,
-        )
+        try:
+            buffer = auto_map(
+                prompt=prompt,
+                mode=item_mode,
+                map_type=item_map_type,
+                size_mod=item_size_mod,
+                optional_feature=item_feature,
+                model=item_model,
+                font_name=item_font,
+                show_result=False,
+                io_res=True,
+                api_key=api_key,
+                **style_options,
+            )
+        except AIServiceError as error:
+            log.warning(str(error))
+            continue
         if buffer is None:
             log.warning(f"[{idx}/{len(ideas)}] Failed to generate map for: {prompt}")
             continue
