@@ -684,6 +684,53 @@ def download_batch_template():
     )
 
 
+@app.route('/api/download_batch_zip', methods=['POST'])
+def download_batch_zip():
+    """Bundle generated batch maps into a single ZIP archive named by topic."""
+    import zipfile
+
+    data = request.get_json(silent=True) or {}
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return jsonify({"status": "error", "error": "No maps provided."}), 400
+
+    buf = io.BytesIO()
+    used_names: dict[str, int] = {}
+    added = 0
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            image_url = str(item.get("image_url") or "").strip()
+            prompt = str(item.get("prompt") or "").strip()
+            if not image_url:
+                continue
+            src_name = Path(image_url.split("?")[0]).name
+            src_path = Path(GENERATED_DIR) / src_name
+            if not src_path.is_file():
+                continue
+
+            base = re.sub(r"[^\w\-]+", "_", prompt.strip().replace(" ", "_")).strip("_") if prompt else f"map_{idx:02d}"
+            if not base:
+                base = f"map_{idx:02d}"
+            count = used_names.get(base, 0) + 1
+            used_names[base] = count
+            arc_name = f"{base}.png" if count == 1 else f"{base}_{count}.png"
+            zf.write(src_path, arcname=arc_name)
+            added += 1
+
+    if added == 0:
+        return jsonify({"status": "error", "error": "No valid map files found to archive."}), 404
+
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="automap_batch.zip",
+    )
+
+
 @app.route('/api/parse_batch_csv', methods=['POST'])
 def parse_batch_csv():
     """Parse an uploaded .csv ideas file and return the normalized idea rows."""

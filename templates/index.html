@@ -1649,12 +1649,38 @@
             a.remove();
         }
 
-        function downloadAllBatchResults() {
+        async function downloadAllBatchResults() {
             if (!lastBatchResults.length) return;
-            lastBatchResults.forEach((item, idx) => {
-                setTimeout(() => downloadBatchResult(idx), idx * 180);
-            });
-            showToast(`Downloading ${lastBatchResults.length} maps...`, 'success');
+            try {
+                showToast(`Creating ZIP for ${lastBatchResults.length} maps...`, 'info');
+                const res = await fetch('/api/download_batch_zip', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        items: lastBatchResults.map(item => ({
+                            image_url: item.image_url,
+                            prompt: item.prompt,
+                            filename: item.filename,
+                        })),
+                    }),
+                });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || 'Failed to create ZIP archive');
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'automap_batch.zip';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                showToast(`Downloaded ${lastBatchResults.length} maps as ZIP!`, 'success');
+            } catch (err) {
+                showToast(`ZIP download failed: ${err.message}`, 'error');
+            }
         }
 
         async function loadIdeasFile(file) {
