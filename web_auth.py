@@ -12,6 +12,7 @@ from flask import jsonify, redirect, render_template, request, session, url_for
 
 
 def _session_secret(app, settings):
+    """Load or atomically create the Flask session signing secret."""
     configured = os.environ.get('WEB_SECRET_KEY') or settings.get('WEB_SECRET_KEY')
     if configured:
         return configured
@@ -36,6 +37,7 @@ def _session_secret(app, settings):
 
 
 def _safe_next(value):
+    """Validate a post-login redirect target so it stays on the same origin."""
     if (not value or not value.startswith('/') or value.startswith('//') or '\\' in value
             or any(ord(char) < 32 or ord(char) == 127 for char in value)):
         return '/'

@@ -144,6 +144,7 @@ def request_too_large(error):
 
 @app.route('/')
 def main():
+    """Serve the main single-page map generator UI."""
     return render_template("index.html")
 
 
@@ -155,6 +156,7 @@ def studio():
 
 @app.route('/api/video_title_preview', methods=['POST'])
 def video_title_preview():
+    """Proxy title/watermark/sticker preview requests to the yt-dlp render worker."""
 
     data = request.get_json(silent=True) or {}
     allowed_keys = (
@@ -225,10 +227,12 @@ def api_status():
 
 
 def _server_api_key(provider):
+    """Return the server-configured API key for ``provider``, if any."""
     return configured_api_key(provider, dotenv_values(env) if env.is_file() else {})
 
 
 def _request_provider(data):
+    """Resolve and validate the AI provider from ``provider`` or ``model``."""
     inferred = provider_for_model(data.get('model') or '')
     provider = data.get('provider') or inferred
     if provider not in ('gemini', 'deepseek'):
@@ -239,6 +243,7 @@ def _request_provider(data):
 
 
 def _request_api_key(data, provider):
+    """Resolve the API key for ``provider`` from server config or the request payload."""
     supplied = str(data.get('api_key') or '').strip() or None
     if provider == 'deepseek':
         resolved = _server_api_key(provider) or supplied
@@ -255,6 +260,7 @@ _TRUTHY = {'1', 'true', 'yes', 'on'}
 
 
 def _wants_refresh(data) -> bool:
+    """Return True if the request asks to bypass the AI response cache."""
     value = data.get('refresh_ai', data.get('refresh', False))
     return value is True or str(value).strip().lower() in _TRUTHY
 
