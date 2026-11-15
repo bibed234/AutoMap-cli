@@ -96,23 +96,90 @@ def list_deepseek_models(api_key):
                    and isinstance(model.get('id'), str) and model['id'].startswith('deepseek-')})
 
 
-def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_search=False):
+def _web_search_ddg(query, max_results=5):
+    """Fetch top web search snippets from DuckDuckGo HTML without external dependencies."""
+    try:
+        resp = requests.post(
+            'https://html.duckduckgo.com/html/',
+            data={'q': str(query)},
+            headers={'User-Agent': 'Mozilla/5.0 (compatible; AutoMap/1.0)'},
+            timeout=(5, 10),
+        )
+        if resp.status_code != 200:
+            return f'Search failed (HTTP {resp.status_code}).'
+        html_text = resp.text
+    except requests.RequestException as err:
+        return f'Search error: {err}'
+
+    snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html_text, flags=re.S)
+    titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html_text, flags=re.S)
+    clean = lambda s: re.sub(r'<[^>]+>', '', s).replace('&amp;', '&').replace('&quot;', '"').strip()
+    lines = []
+    for i in range(min(max_results, max(len(titles), len(snippets)))):
+        t = clean(titles[i]) if i < len(titles) else ''
+        s = clean(snippets[i]) if i < len(snippets) else ''
+        if t or s:
+            lines.append(f'- {t}: {s}' if t and s else f'- {t or s}')
+    return '\n'.join(lines) if lines else 'No search results found.'
+
+
+def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_search=False, max_search_requests=5):
+    messages = [
+        {'role': 'system', 'content': 'Return only a JSON object mapping region names to values. Example: {"ukraine": 42}.'},
+        {'role': 'user', 'content': prompt},
+    ]
     payload = {
         'model': model,
-        'messages': [
-            {'role': 'system', 'content': 'Return only a JSON object mapping region names to values. Example: {"ukraine": 42}.'},
-            {'role': 'user', 'content': prompt},
-        ],
+        'messages': messages,
         'response_format': {'type': 'json_object'},
         'thinking': {'type': 'disabled'},
         'max_tokens': 4096,
         'stream': False,
     }
     if web_search:
-        payload['tools'] = [{'type': 'deepseek_web_search', 'name': 'deepseek_web_search'}]
+        payload['tools'] = [{
+            'type': 'function',
+            'function': {
+                'name': 'web_search',
+                'description': 'Search the web for up-to-date facts, rankings, and statistics.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {'query': {'type': 'string', 'description': 'Search query'}},
+                    'required': ['query'],
+                },
+            },
+        }]
     if temperature is not None:
         payload['temperature'] = validate_temperature(temperature)
-    result = _deepseek_json('chat/completions', api_key or configured_api_key('deepseek'), payload=payload)
+
+    budget = max(1, min(10, int(max_search_requests or 5)))
+    key = api_key or configured_api_key('deepseek')
+    result = _deepseek_json('chat/completions', key, payload=payload)
+
+    while web_search and budget > 0:
+        try:
+            choice = result['choices'][0]
+            msg = choice['message']
+        except (KeyError, IndexError, TypeError) as error:
+            raise AIServiceError('DeepSeek returned no map data. Please try again.', 502) from error
+        tool_calls = msg.get('tool_calls') or []
+        if choice.get('finish_reason') != 'tool_calls' or not tool_calls:
+            break
+        messages.append(msg)
+        for tc in tool_calls:
+            if budget <= 0:
+                messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': 'Search budget reached. Return final JSON now.'})
+                continue
+            budget -= 1
+            try:
+                args = json.loads(tc.get('function', {}).get('arguments') or '{}')
+                q = args.get('query') or prompt
+            except ValueError:
+                q = prompt
+            messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': _web_search_ddg(q)})
+        if budget <= 0:
+            payload.pop('tools', None)
+        result = _deepseek_json('chat/completions', key, payload=payload)
     try:
         choice = result['choices'][0]
         content = choice['message']['content']
@@ -147,7 +214,7 @@ def validate_temperature(value: object) -> float:
     return temperature
 
 
-def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_search=False) -> str | None:
+def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_search=False, max_search_requests=5) -> str | None:
     """Send a request to the AI model and return the response as a string."""
 
     if mode == 'default' or mode == 'flag':
@@ -173,7 +240,10 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_s
     }
     if provider_for_model(ai_model) == 'deepseek':
         with log.spinner('Waiting for DeepSeek response...'):
-            return _deepseek_request(prompt_to_ai, ai_model, api_key, temperature=temperature, web_search=web_search)
+            return _deepseek_request(
+                prompt_to_ai, ai_model, api_key,
+                temperature=temperature, web_search=web_search, max_search_requests=max_search_requests,
+            )
     try:
         with log.spinner("Waiting for AI response..."):
             # If a key was supplied (e.g. from the web UI when .env is missing),
@@ -221,7 +291,7 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_s
 
 
 def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None, _ai_answer = None,
-               *, temperature: float | None = None, web_search: bool = False) -> dict | None:
+               *, temperature: float | None = None, web_search: bool = False, max_search_requests: int = 5) -> dict | None:
     "handle the AI request and parse the response into a dictionary."
     if _ai_answer is not None:
         request = _ai_answer
@@ -229,6 +299,7 @@ def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None
         options = {} if temperature is None else {'temperature': temperature}
         if web_search:
             options['web_search'] = True
+            options['max_search_requests'] = max_search_requests
         request = _ai_request(prompt, mode, ai_model, api_key, **options)
 
     # The AI request can fail and return None (the error is already logged).

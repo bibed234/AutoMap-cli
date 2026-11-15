@@ -639,6 +639,13 @@
                                 class="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500">
                             <span>DeepSeek Web Search <span class="text-[11px] text-slate-400">(enables/disables API search tool)</span></span>
                         </label>
+                        <div class="mt-2 flex items-center gap-3 text-[11px] text-slate-300">
+                            <label for="deepseekMaxSearchInput" class="shrink-0">Max searches:</label>
+                            <input type="range" id="deepseekMaxSearchInput" min="1" max="10" step="1" value="5"
+                                oninput="document.getElementById('deepseekMaxSearchVal').textContent = this.value; try { localStorage.setItem('automap-deepseek-max-search', this.value); } catch {}"
+                                class="flex-1 accent-indigo-500 cursor-pointer">
+                            <span id="deepseekMaxSearchVal" class="font-mono text-indigo-200 w-5 text-right">5</span>
+                        </div>
                     </div>
 
                     <!-- Color Filling Studio: single entry in the left panel -->
@@ -1983,6 +1990,7 @@
             return {
                 provider: activeAiProvider,
                 web_search: !!document.getElementById('deepseekWebSearchToggle')?.checked,
+                max_search_requests: parseInt(document.getElementById('deepseekMaxSearchInput')?.value || '5', 10) || 5,
                 mode,
                 map_type: mapType,
                 gsm,
