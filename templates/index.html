@@ -1587,6 +1587,12 @@
                 dlBtn.addEventListener('click', () => downloadBatchResult(idx));
 
                 row.appendChild(selectBtn);
+                if (item.duration_s !== undefined && item.duration_s !== null) {
+                    const timeBadge = document.createElement('span');
+                    timeBadge.className = 'text-[10px] font-mono text-slate-400 shrink-0';
+                    timeBadge.textContent = `${item.duration_s}s`;
+                    row.appendChild(timeBadge);
+                }
                 row.appendChild(dlBtn);
                 list.appendChild(row);
             });
@@ -1880,6 +1886,7 @@
                             font: idea.font || state.font,
                             palette_theme: idea.palette_theme || state.palette_theme,
                         };
+                        const t0 = performance.now();
                         try {
                             const res = await fetch('/api/generate', {
                                 method: 'POST',
@@ -1891,12 +1898,14 @@
                                 throw new Error(data.error || 'Generation failed');
                             }
                             succeeded++;
+                            const duration_s = ((performance.now() - t0) / 1000).toFixed(1);
                             const filename = idea.output || `${String(idx + 1).padStart(2, '0')}.png`;
                             const itemResult = {
                                 index: idx + 1,
                                 status: 'success',
                                 prompt: idea.prompt,
                                 filename,
+                                duration_s,
                                 image_url: data.image_url,
                                 analysis: data.analysis || null,
                                 map_values: data.map_values || null,
