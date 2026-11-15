@@ -456,7 +456,7 @@
                             </label>
                             <code class="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-900 text-indigo-300 border border-slate-800">-mp, --map-type</code>
                         </div>
-                        <div class="grid grid-cols-3 gap-2.5">
+                        <div class="grid grid-cols-2 gap-2.5">
                             <!-- Default Europe Map -->
                             <label class="cursor-pointer group">
                                 <input type="radio" name="map_type" value="default" checked onchange="updateCommandPreview()" class="peer sr-only">
@@ -488,6 +488,17 @@
                                     </div>
                                     <div class="text-xs font-semibold font-mono text-slate-100">world</div>
                                     <div class="text-[10px] text-slate-400 mt-0.5">Continents</div>
+                                </div>
+                            </label>
+                            <!-- World Countries Map -->
+                            <label class="cursor-pointer group">
+                                <input type="radio" name="map_type" value="world_countries" onchange="updateCommandPreview()" class="peer sr-only">
+                                <div class="p-3 rounded-xl border border-slate-800 bg-slate-950/70 peer-checked:bg-gradient-to-b peer-checked:from-emerald-500/20 peer-checked:to-slate-950 peer-checked:border-emerald-500 peer-checked:shadow-[0_0_20px_rgba(16,185,129,0.2)] text-center hover:border-slate-700 transition-all flex flex-col items-center">
+                                    <div class="w-10 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-1.5 text-emerald-400 group-hover:scale-105 transition-transform">
+                                        <i class="fa-solid fa-earth-americas text-sm"></i>
+                                    </div>
+                                    <div class="text-xs font-semibold font-mono text-slate-100">world_countries</div>
+                                    <div class="text-[10px] text-slate-400 mt-0.5">World Countries</div>
                                 </div>
                             </label>
                         </div>
@@ -2059,7 +2070,7 @@
                 hint.textContent = 'Note: show_most_least is designed for numeric mode (-m number).';
                 hint.className = 'text-[11px] text-amber-400/90 mt-1.5 block';
             } else if (state.extra_option === 'show_most_least' && state.map_type === 'world') {
-                hint.textContent = 'Note: show_most_least overlay is supported on Europe maps (default / flag).';
+                hint.textContent = 'Note: show_most_least overlay is supported on default, flag, and world_countries maps.';
                 hint.className = 'text-[11px] text-amber-400/90 mt-1.5 block';
             } else if (state.extra_option === 'short_form' && state.mode === 'number') {
                 hint.textContent = 'Note: short_form (1k/1M) works best in text mode (-m text).';
@@ -2074,6 +2085,8 @@
             if (!el) return;
             if (state.map_type === 'world') {
                 el.textContent = 'GLOBAL CONTINENTAL PROJECTION • 0.0000° N / 0.0000° E';
+            } else if (state.map_type === 'world_countries') {
+                el.textContent = 'GLOBAL COUNTRIES PROJECTION • 0.0000° N / 0.0000° E';
             } else {
                 el.textContent = 'EUROPE ATLAS SECTOR • LAT 54.5260° N / LON 15.2551° E';
             }

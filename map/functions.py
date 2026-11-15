@@ -232,13 +232,34 @@ def validate_temperature(value: object) -> float:
     return temperature
 
 
+def world_countries_prompt_template() -> str:
+    """Return the AI dictionary template for the ``world_countries`` map.
+
+    ``world_countries_prompt`` may be a ready template string or a mapping of
+    country keys to (empty) placeholder values; both render the same style as
+    ``constants.world``.
+    """
+    from .world_countries_coords import world_countries_prompt
+
+    if isinstance(world_countries_prompt, str):
+        return world_countries_prompt
+    body = ",\n".join(f'        "{key}":' for key in world_countries_prompt)
+    return "{\n" + body + "\n    }"
+
+
 def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_search=False, max_search_requests=5) -> str | None:
     """Send a request to the AI model and return the response as a string."""
 
+    exclusions = "Dont include luxembourg"
     if mode == 'default' or mode == 'flag':
         dict_ = constants.europe
     elif mode == 'world':
         dict_ = constants.world
+    elif mode == 'world_countries':
+        dict_ = world_countries_prompt_template()
+        exclusions = "Use exactly the keys of the dictionary below."
+    else:
+        raise ValueError(f"Unknown map type: {mode}")
 
     # request data
     prompt_to_ai = f"""Fill in a dictionary where the key """ + str(prompt) + f"""
@@ -248,7 +269,7 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_s
                 
     Provide the answer only as a dictionary, without explanations.
 
-    Dont include luxembourg
+    {exclusions}
                         
     {dict_}
     """
@@ -418,7 +439,7 @@ BATCH_CSV_OPTIONAL_COLUMNS: tuple[str, ...] = (
 )
 BATCH_CSV_ALL_COLUMNS: tuple[str, ...] = BATCH_CSV_REQUIRED_COLUMNS + BATCH_CSV_OPTIONAL_COLUMNS
 _ALLOWED_MODES = frozenset({"text", "number"})
-_ALLOWED_MAP_TYPES = frozenset({"default", "flag", "world"})
+_ALLOWED_MAP_TYPES = frozenset({"default", "flag", "world", "world_countries"})
 _ALLOWED_EXTRA_OPTIONS = frozenset({"none", "show_most_least", "short_form"})
 
 
