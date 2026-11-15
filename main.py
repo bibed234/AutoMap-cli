@@ -15,10 +15,9 @@
 """Flask web interface for AutoMap.
 
 Serves the single-page UI in ``templates/index.html`` and exposes a small JSON
-API used by that UI. The API key handling is the interesting part: if a ``.env``
-file with a real ``GEMINI_API_KEY`` is present, the web UI never asks for a key.
-If it is missing, ``/api/status`` reports it and the UI shows a key input, whose
-value is forwarded to the generation request only.
+API used by that UI. Gemini and DeepSeek use separate keys from the environment
+or ``.env``. If the selected provider has no configured key, ``/api/status``
+reports it and the UI uses that provider's browser-saved key for the request.
 """
 
 import base64
@@ -29,7 +28,7 @@ import time
 
 from pathlib import Path
 from PIL import Image, UnidentifiedImageError
-import requests
+import requests as _requests_module
 
 # auto_map() loads fonts/maps via *relative* paths ("resources/fonts", ...),
 # so the process must run from the AutoMap-cli project directory. Anchor the
@@ -55,9 +54,13 @@ from map.auto_map import (
 )
 from map.constants import europe_coords, world_coords
 from cli import AVAILABLE_MODELS
-from map.functions import AIServiceError, parse_ideas_content, slugify_prompt, validate_temperature
+from map.functions import (
+    AIServiceError, configured_api_key, list_deepseek_models, parse_ideas_content,
+    provider_for_model, provider_key_name, slugify_prompt, validate_temperature,
+)
 
-from flask import Flask, request, jsonify, send_file, render_template, Response
+from flask import Flask, request, jsonify, send_file, render_template, Response, session
+from web_ai_cache import ai_cache
 
 FONTS_DIR = BASE_DIR / "resources" / "fonts"
 
@@ -66,6 +69,37 @@ key = (os.environ.get("GEMINI_API_KEY") or "").strip()
 if not key and env.is_file():
     key = (dotenv_values(env).get("GEMINI_API_KEY") or "").strip()
 needs_api_key = not key or key.startswith("your_")
+
+class _PooledRequests:
+    """``requests``-compatible facade that reuses one pooled Session.
+
+    Keeps keep-alive connections to the worker instead of opening a new TCP
+    connection per proxied call. Attribute access (exceptions, etc.) falls
+    through to the ``requests`` module, and tests can still patch
+    ``main.requests.get``/``post``.
+    """
+
+    def __init__(self):
+        self._session = _requests_module.Session()
+        self._orig_get = _requests_module.get
+        self._orig_post = _requests_module.post
+
+    def get(self, *args, **kwargs):
+        if _requests_module.get is not self._orig_get:
+            return _requests_module.get(*args, **kwargs)
+        return self._session.get(*args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        if _requests_module.post is not self._orig_post:
+            return _requests_module.post(*args, **kwargs)
+        return self._session.post(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(_requests_module, name)
+
+
+requests = _PooledRequests()
+
 WORKER_URL = (os.environ.get("YTDLP_URL") or "http://yt-dlp-worker:8080").rstrip('/')
 
 
@@ -99,7 +133,7 @@ def validate_api_json_body():
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify(status='error', error='Request body must be a valid JSON object.'), 400
-        for name in ('api_key', 'url'):
+        for name in ('api_key', 'url', 'provider', 'model'):
             if data.get(name) is not None and not isinstance(data[name], str):
                 return jsonify(status='error', error=f'{name} must be a string.'), 400
 
@@ -110,6 +144,7 @@ def request_too_large(error):
 
 @app.route('/')
 def main():
+    """Serve the main single-page map generator UI."""
     return render_template("index.html")
 
 
@@ -121,7 +156,7 @@ def studio():
 
 @app.route('/api/video_title_preview', methods=['POST'])
 def video_title_preview():
-    import requests
+    """Proxy title/watermark/sticker preview requests to the yt-dlp render worker."""
 
     data = request.get_json(silent=True) or {}
     allowed_keys = (
@@ -169,7 +204,6 @@ def api_fonts():
 @app.route('/api/codecs')
 def api_codecs():
     """Ask the render worker which encoders its FFmpeg and hardware can use."""
-    import requests
 
     try:
         response = requests.get(f'{WORKER_URL}/api/codecs', timeout=20)
@@ -180,12 +214,91 @@ def api_codecs():
 
 @app.route('/api/status')
 def api_status():
-    """Report whether the server already has a usable Gemini API key.
+    """Report whether the selected provider already has a server-side key.
 
     Response:
         { "needs_api_key": true }  -> the UI must ask the user for a key
     """
-    return jsonify({"needs_api_key": needs_api_key})
+    provider = request.args.get('provider', 'gemini')
+    if provider not in ('gemini', 'deepseek'):
+        return jsonify(status='error', error='Unknown AI provider.'), 400
+    required = needs_api_key if provider == 'gemini' else not _server_api_key(provider)
+    return jsonify({"needs_api_key": required})
+
+
+def _server_api_key(provider):
+    """Return the server-configured API key for ``provider``, if any."""
+    return configured_api_key(provider, dotenv_values(env) if env.is_file() else {})
+
+
+def _request_provider(data):
+    """Resolve and validate the AI provider from ``provider`` or ``model``."""
+    inferred = provider_for_model(data.get('model') or '')
+    provider = data.get('provider') or inferred
+    if provider not in ('gemini', 'deepseek'):
+        raise ValueError('Unknown AI provider.')
+    if data.get('model') and inferred != provider:
+        raise ValueError('The selected model belongs to a different AI provider.')
+    return provider
+
+
+def _request_api_key(data, provider):
+    """Resolve the API key for ``provider`` from server config or the request payload."""
+    supplied = str(data.get('api_key') or '').strip() or None
+    if provider == 'deepseek':
+        resolved = _server_api_key(provider) or supplied
+    else:
+        resolved = supplied
+        if not needs_api_key:
+            return resolved
+    if not resolved:
+        raise ValueError(f'API key required. Provide {provider_key_name(provider)} via .env or the web form.')
+    return resolved
+
+
+_TRUTHY = {'1', 'true', 'yes', 'on'}
+
+
+def _wants_refresh(data) -> bool:
+    """Return True if the request asks to bypass the AI response cache."""
+    value = data.get('refresh_ai', data.get('refresh', False))
+    return value is True or str(value).strip().lower() in _TRUTHY
+
+
+def _auto_map_with_ai_cache(*, refresh: bool, provider: str, api_key, **kwargs):
+    """Call auto_map, reusing a cached AI answer for identical data requests.
+
+    Only request-affecting inputs form the key, so font/style/palette changes
+    reuse the answer. API keys only contribute a hash to the user scope.
+    Returns (buffer, cache_hit).
+    """
+    temperature = kwargs.get('temperature')
+    identity = ''
+    try:
+        identity = str(session.get('web_identity', '') or '')
+    except RuntimeError:
+        identity = ''
+    cache_key = ai_cache.make_key(
+        ai_cache.scope(identity, api_key),
+        prompt=str(kwargs.get('prompt') or ''),
+        map_type=str(kwargs.get('map_type') or ''),
+        model=str(kwargs.get('model') or ''),
+        provider=provider,
+        temperature=temperature,
+        short_form=kwargs.get('optional_feature') == 'short_form',
+        web_search=bool(kwargs.get('web_search', False)),
+        max_search_requests=kwargs.get('max_search_requests', 5),
+    )
+    cached = None if refresh else ai_cache.get(cache_key)
+    if cached is not None:
+        kwargs['ai_answer_override'] = cached
+    buffer = auto_map(api_key=api_key, **kwargs)
+    if cached is None and buffer is not None:
+        meta = getattr(buffer, 'map_meta', None)
+        answer = meta.get('ai_answer') if isinstance(meta, dict) else None
+        if isinstance(answer, dict):
+            ai_cache.put(cache_key, answer)
+    return buffer, cached is not None
 
 
 def _build_analysis_from_ai(
@@ -423,10 +536,11 @@ def generate():
     data = request.get_json(silent=True) or {}
 
     # Optional user-supplied key (used only when .env has none).
-    api_key = (data.get('api_key') or '').strip() or None
-    if needs_api_key and not api_key:
-        return jsonify({"status": "error",
-                        "error": "API key required. Provide GEMINI_API_KEY via .env or the web form."}), 400
+    try:
+        provider = _request_provider(data)
+        api_key = _request_api_key(data, provider)
+    except ValueError as error:
+        return jsonify(status='error', error=str(error)), 400
 
     # Validate the requested font against what is actually on disk, otherwise
     # auto_map would raise FileNotFoundError when loading the TrueType file.
@@ -461,7 +575,9 @@ def generate():
             style_kwargs[kw_name] = data[style_key]
 
     try:
-        buffer = auto_map(
+        buffer, ai_cache_hit = _auto_map_with_ai_cache(
+            refresh=_wants_refresh(data),
+            provider=provider,
             prompt=data['topic'],
             mode=data['mode'],
             map_type=data['map_type'],
@@ -473,6 +589,7 @@ def generate():
             io_res=True,
             api_key=api_key,
             **temperature_options,
+            **({"web_search": True, "max_search_requests": max(1, min(10, int(data.get("max_search_requests") or 5)))} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
             **style_kwargs,
         )
     except AIServiceError as error:
@@ -496,6 +613,7 @@ def generate():
         "status": "success",
         "command": command,
         "image_url": f"data:image/png;base64,{encoded}",
+        "ai_cached": ai_cache_hit,
     }
     render_meta = getattr(buffer, "map_meta", None)
     ai_vals = render_meta.get("ai_answer") if isinstance(render_meta, dict) else None
@@ -514,10 +632,22 @@ def generate():
 
 @app.route('/api/models', methods=['POST'])
 def list_available_models():
-    """Return Gemini/Gemma models available for the active API key."""
+    """Return models available for the selected provider's API key."""
     data = request.get_json(silent=True) or {}
+    try:
+        provider = _request_provider(data)
+    except ValueError as error:
+        return jsonify(status='error', error=str(error), models=[]), 400
+    if provider == 'deepseek':
+        try:
+            models = list_deepseek_models(_request_api_key(data, provider))
+            return jsonify(status='success', models=models)
+        except ValueError as error:
+            return jsonify(status='error', error=str(error), models=[]), 400
+        except AIServiceError as error:
+            return jsonify(status='error', error=str(error), models=[]), error.status_code
     req_key = str(data.get("api_key") or "").strip()
-    env_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    env_key = _server_api_key('gemini') or ''
     key = req_key or env_key
     if not key:
         return jsonify({"status": "error", "error": "API key required.", "models": []}), 400
@@ -563,6 +693,83 @@ def download_batch_template():
     )
 
 
+@app.route('/api/download_batch_zip', methods=['POST'])
+def download_batch_zip():
+    """Bundle generated batch maps into a single ZIP archive named by topic."""
+    import zipfile
+
+    data = request.get_json(silent=True) or {}
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return jsonify({"status": "error", "error": "No maps provided."}), 400
+
+    buf = io.BytesIO()
+    used_names: set[str] = set()
+    added = 0
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            image_url = str(item.get("image_url") or "").strip()
+            prompt = str(item.get("prompt") or "").strip()
+            if not image_url.startswith('data:image/png;base64,'):
+                continue
+            try:
+                image_bytes = base64.b64decode(image_url.split(',', 1)[1], validate=True)
+                with Image.open(io.BytesIO(image_bytes)) as image:
+                    if image.format != 'PNG':
+                        continue
+                    image.verify()
+            except (ValueError, OSError):
+                continue
+
+            base = re.sub(r"[^\w\-]+", "_", prompt.strip().replace(" ", "_")).strip("_") if prompt else f"map_{idx:02d}"
+            if not base:
+                base = f"map_{idx:02d}"
+            count = 1
+            arc_name = f"{base}.png"
+            while arc_name in used_names:
+                count += 1
+                arc_name = f"{base}_{count}.png"
+            used_names.add(arc_name)
+            zf.writestr(arc_name, image_bytes)
+            added += 1
+
+    if added == 0:
+        return jsonify({"status": "error", "error": "No valid map files found to archive."}), 404
+
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="automap_batch.zip",
+    )
+
+
+@app.route('/api/parse_batch_csv', methods=['POST'])
+def parse_batch_csv():
+    """Parse an uploaded .csv ideas file and return the normalized idea rows."""
+    if request.files and "file" in request.files:
+        uploaded = request.files["file"]
+        filename = uploaded.filename or ""
+        ideas_text = uploaded.read().decode("utf-8", errors="replace")
+    else:
+        data = request.get_json(silent=True) or {}
+        filename = str(data.get("filename") or "")
+        ideas_text = str(data.get("ideas_text") or "")
+
+    try:
+        ideas = parse_ideas_content(ideas_text, filename=filename)
+    except ValueError as err:
+        return jsonify({"status": "error", "error": str(err)}), 400
+
+    if not ideas:
+        return jsonify({"status": "error", "error": "No valid map ideas found in the uploaded file."}), 400
+
+    return jsonify({"status": "success", "ideas": ideas, "total": len(ideas)})
+
+
 @app.route('/api/generate_batch/', methods=['POST'])
 @app.route('/api/generate_batch', methods=['POST'])
 def generate_batch():
@@ -577,12 +784,11 @@ def generate_batch():
         filename = str(data.get("filename") or "")
         ideas_text = str(data.get("ideas_text") or "")
 
-    api_key = str(data.get("api_key") or "").strip() or None
-    if needs_api_key and not api_key:
-        return jsonify({
-            "status": "error",
-            "error": "API key required. Provide GEMINI_API_KEY via .env or the web form.",
-        }), 400
+    try:
+        provider = _request_provider(data)
+        api_key = _request_api_key(data, provider)
+    except ValueError as error:
+        return jsonify(status='error', error=str(error)), 400
 
     try:
         ideas = parse_ideas_content(ideas_text, filename=filename)
@@ -595,7 +801,7 @@ def generate_batch():
     default_font, default_eop, default_gsm = _parse_render_params(data)
     default_mode = str(data.get("mode") or "text").lower()
     default_map_type = str(data.get("map_type") or "default").lower()
-    default_model = str(data.get("model") or AVAILABLE_MODELS[0])
+    default_model = str(data.get("model") or ('deepseek-flash' if provider == 'deepseek' else AVAILABLE_MODELS[0]))
     available_fonts = set(_available_fonts())
 
     temperature_options: dict[str, object] = {}
@@ -641,7 +847,13 @@ def generate_batch():
             out_filename += ".png"
 
         try:
-            buffer = auto_map(
+            item_provider = provider_for_model(item_model)
+            item_api_key = api_key if item_provider == provider else _server_api_key(item_provider)
+            if not item_api_key and (item_provider == 'deepseek' or needs_api_key):
+                raise ValueError(f'API key required for {item_provider}. Use one provider per CSV or configure its server key.')
+            buffer, _hit = _auto_map_with_ai_cache(
+                refresh=_wants_refresh(data),
+                provider=item_provider,
                 prompt=prompt,
                 mode=item_mode,
                 map_type=item_map_type,
@@ -651,8 +863,9 @@ def generate_batch():
                 font_name=item_font,
                 show_result=False,
                 io_res=True,
-                api_key=api_key,
+                api_key=item_api_key,
                 **temperature_options,
+                **({"web_search": True, "max_search_requests": max(1, min(10, int(data.get("max_search_requests") or 5)))} if str(data.get("web_search") or "").strip().lower() in ("1", "true", "yes", "on") else {}),
                 **item_style_kwargs,
             )
         except Exception as err:  # noqa: BLE001
@@ -687,6 +900,7 @@ def generate_batch():
             "gsm": item_gsm,
             "extra_option": item_eop or "none",
             "model": item_model,
+            "provider": item_provider,
             "font": item_font,
             "palette_theme": item_style_kwargs.get("palette_theme", "auto"),
         }
@@ -864,7 +1078,6 @@ def music_download():
         { "status": "success", "file": "<base64 mp3>", "title": "<song title>" }
         { "status": "error", "error": "<message>" }
     """
-    import requests
 
     data = request.get_json(silent=True) or {}
     url = (data.get('url') or '').strip()
@@ -922,7 +1135,6 @@ def cut_audio() -> tuple[object, int]:
         { "status": "success", "file": "<base64 mp3>", "title": "<song title>" }
         { "status": "error", "error": "<message>" }
     """
-    import requests
 
     data: dict[str, object] = request.get_json(silent=True) or {}
     start_time = str(data.get('start_time') or '').strip()
@@ -963,6 +1175,32 @@ def cut_audio() -> tuple[object, int]:
     return jsonify(payload), response.status_code
 
 
+def _render_video_request_data():
+    """Return render settings from JSON or from a binary multipart upload.
+
+    Multipart form: a ``payload`` field holding the JSON settings object plus
+    file parts named like the JSON fields (``map_file``, ``background_video``,
+    ``audio_file``, ...). Files are converted to the data URLs the worker
+    expects, so the browser avoids base64 encoding and the ~33% upload overhead.
+    """
+    if not request.files and 'payload' not in request.form:
+        return request.get_json(silent=True) or {}
+    import json
+    try:
+        data = json.loads(request.form.get('payload') or '{}')
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    for field, storage in request.files.items():
+        raw = storage.read()
+        if not raw:
+            continue
+        mime = storage.mimetype or 'application/octet-stream'
+        data[field] = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    return data
+
+
 @app.route('/api/render_video', methods=['POST'])
 @app.route('/api/render_video/', methods=['POST'])
 def make_video() -> tuple[object, int]:
@@ -981,9 +1219,10 @@ def make_video() -> tuple[object, int]:
         { "status": "success", "file_path": "...", "download_url": "..." }
         { "status": "error", "error": "<message>" }
     """
-    import requests
 
-    data: dict[str, object] = request.get_json(silent=True) or {}
+    data = _render_video_request_data()
+    if data is None:
+        return jsonify(status='error', error='Invalid multipart payload field.'), 400
 
     # The frontend sends base64 strings; keep them as-is (default to empty string).
     map_b64 = data.get('map_file') or ''
@@ -1026,6 +1265,7 @@ def make_video() -> tuple[object, int]:
                 "subscribe_text": data.get('subscribe_text', 'Subscribe!'),
                 "subscribe_delay": data.get('subscribe_delay', 2.5),
                 "intro_fade": data.get('intro_fade', False),
+                **({'render_id': data['render_id']} if data.get('render_id') is not None else {}),
             },
             # Video rendering (moviepy/ffmpeg) can take a while - allow more time.
             timeout=300,
@@ -1045,6 +1285,22 @@ def make_video() -> tuple[object, int]:
     return jsonify(payload), response.status_code
 
 
+@app.get('/api/render_progress/<uuid:render_id>')
+def video_render_progress(render_id):
+    try:
+        response = requests.get(f'{WORKER_URL}/api/render_progress/{render_id}', timeout=5)
+    except requests.RequestException:
+        return jsonify(error='Render progress is temporarily unavailable.'), 502
+    try:
+        result = jsonify(response.json())
+        result.headers['Cache-Control'] = 'no-store'
+        return result, response.status_code
+    except ValueError:
+        return jsonify(error='Render service returned invalid progress.'), 502
+    finally:
+        response.close()
+
+
 @app.route('/api/download_video', methods=['GET'])
 @app.route('/api/download_video/', methods=['GET'])
 def download_video():
@@ -1054,7 +1310,6 @@ def download_video():
     lives in the worker container's storage, so we proxy the download to the
     worker and stream its response back as an attachment.
     """
-    import requests
     from flask import Response
 
     raw_path = (request.args.get('path') or '').strip()

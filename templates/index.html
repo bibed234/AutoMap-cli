@@ -282,7 +282,7 @@
                         <div class="flex justify-between items-center mb-1.5">
                             <label for="apiKeyInput" class="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
                                 <i class="fa-solid fa-key text-amber-400"></i>
-                                Gemini API Key (required — no .env found)
+                                <span id="apiKeyLabel">Gemini API Key</span>
                             </label>
                             <span class="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">Saved in browser</span>
                         </div>
@@ -353,7 +353,11 @@
                         </div>
 
                         <!-- Batch Generation: Ideas from CSV -->
-                        <div class="mt-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-2">
+                        <div id="csvDropZone"
+                            ondragover="handleCsvDragOver(event)"
+                            ondragleave="handleCsvDragLeave(event)"
+                            ondrop="handleCsvDrop(event)"
+                            class="mt-3 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/90 space-y-2 transition-colors">
                             <div class="flex items-center justify-between gap-2">
                                 <span class="text-[11px] font-medium text-slate-300 flex items-center gap-1.5">
                                     <i class="fa-solid fa-file-csv text-emerald-400 text-[11px]"></i>
@@ -369,7 +373,7 @@
                             <div class="flex items-center gap-2">
                                 <label for="ideasFileInput" class="flex-1 cursor-pointer px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-[11px] font-medium text-slate-300 hover:text-white transition text-center truncate">
                                     <i class="fa-solid fa-upload mr-1 text-indigo-400"></i>
-                                    Choose CSV File
+                                    <span id="ideasFileLabelText">Choose or Drop CSV</span>
                                 </label>
                                 <input type="file" id="ideasFileInput" accept=".csv" class="hidden" onchange="handleIdeasFileSelected(event)">
                                 <button type="button" id="generateBatchBtn" onclick="generateMapsFromFile()" disabled
@@ -378,6 +382,10 @@
                                     <span>Generate All</span>
                                 </button>
                             </div>
+                            <label class="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer select-none pt-0.5">
+                                <input type="checkbox" id="batchParallelToggle" checked class="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500">
+                                <span>Parallel per-map requests (with progress bar)</span>
+                            </label>
                             <div id="batchResultsPanel" class="hidden pt-2 border-t border-slate-800/80 space-y-1.5">
                                 <div class="flex items-center justify-between">
                                     <span id="batchResultsSummary" class="text-[10px] font-mono text-emerald-300">0 maps ready</span>
@@ -553,8 +561,9 @@
                             </div>
                             <div class="flex gap-1.5">
                                 <div class="relative flex-1 min-w-0">
-                                    <select id="modelSelect" onchange="updateCommandPreview()" 
+                                    <select id="modelSelect" onchange="onAiModelChange(this.value)"
                                         class="w-full appearance-none px-3 py-2.5 bg-slate-950/90 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-indigo-500 transition pr-7 truncate">
+                                        <optgroup id="geminiModelsGroup" label="Gemini">
                                         <option value="gemini-3.8-flash">gemini-3.8-flash</option>
                                         <option value="gemini-4-hydrogen">gemini-4-hydrogen</option>
                                         <option value="gemini-4-carbon">gemini-4-carbon</option>
@@ -566,6 +575,11 @@
                                         <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
                                         <option value="gemma-4-31b-it">gemma-4-31b-it</option>
                                         <option value="gemma-4-26b-a4b-it">gemma-4-26b-a4b-it</option>
+                                        </optgroup>
+                                        <optgroup id="deepseekModelsGroup" label="DeepSeek">
+                                        <option value="deepseek-flash">deepseek-flash</option>
+                                        <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                                        </optgroup>
                                     </select>
                                     <i class="fa-solid fa-chevron-down absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 pointer-events-none"></i>
                                 </div>
@@ -620,6 +634,18 @@
                         <div class="flex justify-between text-[11px] text-indigo-200/90 mt-2"><span>0 · More consistent</span><span>2 · More varied</span></div>
                         <button type="button" onclick="updateAiTemperature(0.75)" class="mt-2 text-xs font-medium text-indigo-300 hover:text-indigo-100 underline underline-offset-2">Reset to 0.75</button>
                         <p id="aiTemperatureHint" class="text-[11px] text-slate-300 mt-2">Controls response randomness, not factual accuracy. Lower values do not prevent AI hallucinations.</p>
+                        <label class="mt-3 pt-2.5 border-t border-indigo-400/20 flex items-center gap-2 text-xs text-indigo-100 cursor-pointer select-none">
+                            <input type="checkbox" id="deepseekWebSearchToggle" onchange="try { localStorage.setItem('automap-deepseek-web-search', this.checked ? '1' : '0'); } catch {}"
+                                class="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500">
+                            <span>DeepSeek Web Search <span class="text-[11px] text-slate-400">(enables/disables API search tool)</span></span>
+                        </label>
+                        <div class="mt-2 flex items-center gap-3 text-[11px] text-slate-300">
+                            <label for="deepseekMaxSearchInput" class="shrink-0">Max searches:</label>
+                            <input type="range" id="deepseekMaxSearchInput" min="1" max="10" step="1" value="5"
+                                oninput="document.getElementById('deepseekMaxSearchVal').textContent = this.value; try { localStorage.setItem('automap-deepseek-max-search', this.value); } catch {}"
+                                class="flex-1 accent-indigo-500 cursor-pointer">
+                            <span id="deepseekMaxSearchVal" class="font-mono text-indigo-200 w-5 text-right">5</span>
+                        </div>
                     </div>
 
                     <!-- Color Filling Studio: single entry in the left panel -->
@@ -643,11 +669,29 @@
                         </div>
                     </div>
 
+                    <div class="p-3 rounded-xl bg-slate-950/75 border border-slate-800">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <label for="labelOffsetX" class="text-xs font-semibold text-slate-200">Global label position</label>
+                            <output id="labelOffsetXValue" for="labelOffsetX" class="text-xs font-mono text-indigo-300">0 px</output>
+                        </div>
+                        <input id="labelOffsetX" type="range" min="-500" max="500" step="1" value="0" oninput="updateLabelOffset(this.value)" aria-describedby="labelOffsetXHint" class="w-full accent-indigo-400">
+                        <div class="flex justify-between text-[11px] text-slate-400"><span>← Left</span><button type="button" onclick="updateLabelOffset(0)" class="text-indigo-300 hover:text-indigo-100">Reset</button><span>Right →</span></div>
+                        <p id="labelOffsetXHint" class="text-[11px] text-slate-400 mt-2">Moves every country label horizontally. Click Re-Paint to apply without another AI request.</p>
+                    </div>
+
                     <!-- Submit / Generate Button -->
                     <button type="submit" id="generateBtn" class="relative w-full py-3.5 px-5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:via-indigo-400 hover:to-purple-500 text-white font-display font-semibold text-sm shadow-xl shadow-indigo-600/30 hover:shadow-indigo-500/45 border border-white/15 transition-all flex items-center justify-center gap-2.5 group overflow-hidden">
                         <i id="generateBtnIcon" class="fa-solid fa-play transition-transform group-hover:translate-x-0.5"></i>
                         <span id="generateBtnText">Run CLI &amp; Generate Map</span>
                     </button>
+                    <button type="button" id="restyleCurrentMapBtn" onclick="restyleCurrentMapFromStudio()" class="w-full justify-center px-3.5 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait">
+                        <i id="mapRepaintIcon" class="fa-solid fa-paintbrush" aria-hidden="true"></i>
+                        <span id="mapRepaintButtonLabel">Apply &amp; Re-Paint Current Map</span>
+                    </button>
+                <div id="mapRepaintStatus" role="status" aria-live="polite" class="hidden w-full text-xs text-emerald-300 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-notch animate-spin" aria-hidden="true"></i>
+                    <span>Re-painting map… Please wait while colors and labels are rendered.</span>
+                </div>
                     <p id="generationError" role="alert" class="hidden text-xs text-rose-300 bg-rose-950/50 border border-rose-500/30 rounded-xl p-3"></p>
                 </form>
             </div>
@@ -736,6 +780,13 @@
 
                 <!-- Map Viewport Area -->
                 <div id="mapViewport" class="relative flex-1 bg-slate-950 canvas-grid flex items-center justify-center overflow-hidden select-none p-4 sm:p-8 cursor-grab active:cursor-grabbing">
+                    <div id="mapRepaintOverlay" role="status" aria-live="polite" class="hidden absolute inset-0 z-30 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-6 cursor-wait">
+                        <div class="flex flex-col items-center gap-3 rounded-2xl border border-emerald-500/40 bg-slate-900/95 px-8 py-6 text-center shadow-2xl">
+                            <i class="fa-solid fa-circle-notch animate-spin text-2xl text-emerald-300" aria-hidden="true"></i>
+                            <span class="text-base font-semibold text-white">Re-painting map…</span>
+                            <span class="text-xs text-slate-300">Updating colors and label positions. Please wait.</span>
+                        </div>
+                    </div>
                     
                     <!-- Subtle Cartographic Coordinate HUD Accents -->
                     <div class="absolute top-3 left-4 pointer-events-none flex items-center gap-3 text-[10px] font-mono text-slate-500/80">
@@ -764,7 +815,7 @@
                             </div>
 
                             <div class="text-base font-display font-bold text-white">Synthesizing Cartographic Layer</div>
-                            <div id="loadingStepText" class="text-xs text-indigo-300 mt-1 font-mono">Querying Gemini model and rendering map</div>
+                            <div id="loadingStepText" class="text-xs text-indigo-300 mt-1 font-mono">Querying AI model and rendering map</div>
                             
                             <!-- Multi-stage Step Progress List -->
                             <div class="w-full mt-4 space-y-2 text-left bg-slate-950/80 p-3.5 rounded-xl border border-slate-800/80 font-mono text-[11px]">
@@ -863,8 +914,9 @@
                     <div class="text-slate-400">[Info] Select your desired flags <span class="text-indigo-400">-m, -mp, -gsm, -eop, --model, --font</span> and click "Run CLI &amp; Generate Map".</div>
                 </div>
 
-                <!-- Tab 2: Generation History -->
+                <!-- Tab 2: Generation History (saved locally for 24 hours) -->
                 <div id="historyTabContent" class="hidden p-4 bg-slate-950/90 h-40 overflow-y-auto">
+                    <p id="historyStorageStatus" role="status" class="text-[11px] text-slate-400 mb-2">Saved in this browser · automatically removed after 24 hours.</p>
                     <div id="historyList" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
                         <div class="text-xs text-slate-500 col-span-full text-center py-8">No runs yet. Generate your first map!</div>
                     </div>
@@ -1099,19 +1151,11 @@
 
             <!-- Modal Footer -->
             <div class="px-6 py-3.5 border-t border-slate-800 bg-slate-950/80 flex flex-wrap items-center justify-between gap-2">
-                <div id="mapRepaintStatus" role="status" aria-live="polite" class="hidden w-full text-xs text-emerald-300 flex items-center gap-2">
-                    <i class="fa-solid fa-circle-notch animate-spin" aria-hidden="true"></i>
-                    <span>Re-painting map… Please wait while colors and labels are rendered.</span>
-                </div>
                 <button type="button" onclick="resetFillingDefaults()" class="text-xs text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
                     <i class="fa-solid fa-rotate-left"></i>
                     <span>Restore Default Palette</span>
                 </button>
                 <div class="flex items-center gap-2">
-                    <button type="button" id="restyleCurrentMapBtn" onclick="restyleCurrentMapFromStudio()" class="px-3.5 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait">
-                        <i id="mapRepaintIcon" class="fa-solid fa-paintbrush" aria-hidden="true"></i>
-                        <span id="mapRepaintButtonLabel">Apply &amp; Re-Paint Current Map</span>
-                    </button>
                     <button type="button" onclick="closeFillingStudio(true)" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">
                         Done &amp; Save Preview
                     </button>
@@ -1137,6 +1181,9 @@
         let dragStartX = 0;
         let dragStartY = 0;
         let runHistory = [];
+        let historyWrites = Promise.resolve();
+        let historyRevision = 0;
+        const HISTORY_RETENTION_MS = StudioStorage.HISTORY_RETENTION_MS;
         let apiKeyRequired = false;
         let loadingTimerInterval = null;
 
@@ -1174,12 +1221,24 @@
         const MAP_PALETTE_STORAGE_KEY = 'automap-map-palette-theme';
         const AI_TEMPERATURE_STORAGE_KEY = 'automap-ai-temperature';
         const API_KEY_STORAGE_KEY = 'automap-gemini-api-key';
+        const PROVIDER_STORAGE_KEY = 'automap-ai-provider';
+        const PROVIDER_KEY_STORAGE = {gemini: API_KEY_STORAGE_KEY, deepseek: 'automap-deepseek-api-key'};
+        const PROVIDER_LABELS = {gemini: 'Gemini', deepseek: 'DeepSeek'};
+        let activeAiProvider = 'gemini';
+        let modelListVersion = 0;
+        const fallbackModels = Array.from(document.getElementById('modelSelect').options, option => option.value);
+        const providerKeys = {gemini: '', deepseek: ''};
         const MAP_TOPIC_STORAGE_KEY = 'automap-map-topic';
         const DEFAULT_AI_TEMPERATURE = 0.75;
+        const LABEL_OFFSET_STORAGE_KEY = 'automap-label-offset-x';
 
         // --- Initialize on Load ---
         window.addEventListener('DOMContentLoaded', () => {
+            window.runHistoryReady = restoreRunHistory();
+            setInterval(pruneRunHistory, 60000);
+            window.addEventListener('focus', pruneRunHistory);
             restoreSavedMapInputs();
+            try { updateLabelOffset(localStorage.getItem(LABEL_OFFSET_STORAGE_KEY) || 0, false); } catch {}
             updateAiTemperature(DEFAULT_AI_TEMPERATURE, false);
             try {
                 const saved = localStorage.getItem(AI_TEMPERATURE_STORAGE_KEY);
@@ -1187,6 +1246,8 @@
             } catch {
                 // Keep the default when browser storage is unavailable.
             }
+            populateProviderModels(activeAiProvider);
+            updateProviderKeyLabel();
             restoreMapPaletteTheme();
             updateCommandPreview();
             renderFillingStudio();
@@ -1198,11 +1259,13 @@
             const apiKeyInputEl = document.getElementById('apiKeyInput');
             if (apiKeyInputEl) {
                 apiKeyInputEl.addEventListener('input', () => {
-                    saveBrowserValue(API_KEY_STORAGE_KEY, apiKeyInputEl.value.trim());
+                    providerKeys[activeAiProvider] = apiKeyInputEl.value.trim();
+                    saveBrowserValue(PROVIDER_KEY_STORAGE[activeAiProvider], apiKeyInputEl.value.trim());
                     updateApiKeyIndicator();
                 });
                 apiKeyInputEl.addEventListener('change', () => {
-                    saveBrowserValue(API_KEY_STORAGE_KEY, apiKeyInputEl.value.trim());
+                    providerKeys[activeAiProvider] = apiKeyInputEl.value.trim();
+                    saveBrowserValue(PROVIDER_KEY_STORAGE[activeAiProvider], apiKeyInputEl.value.trim());
                     updateApiKeyIndicator();
                     loadAvailableModels();
                 });
@@ -1267,9 +1330,66 @@
             }
         }
 
+        function modelProvider(model) {
+            return String(model || '').toLowerCase().startsWith('deepseek-') ? 'deepseek' : 'gemini';
+        }
+
+        function populateProviderModels(provider, selectedModel = null) {
+            const select = document.getElementById('modelSelect');
+            const models = fallbackModels.filter(model => modelProvider(model) === provider);
+            if (selectedModel && modelProvider(selectedModel) === provider && !models.includes(selectedModel)) {
+                models.push(selectedModel);
+            }
+            document.getElementById(`${provider}ModelsGroup`).replaceChildren(...models.map(model => new Option(model, model)));
+            if (selectedModel && models.includes(selectedModel)) select.value = selectedModel;
+            else if (modelProvider(select.value) !== provider) select.value = models[0];
+        }
+
+        function updateProviderKeyLabel() {
+            document.getElementById('apiKeyLabel').textContent = `${PROVIDER_LABELS[activeAiProvider]} API Key`;
+            document.getElementById('apiKeyInput').placeholder = `Paste your ${PROVIDER_LABELS[activeAiProvider]} API key...`;
+        }
+
+        function onAiModelChange(model) {
+            changeAiProvider(modelProvider(model), model);
+        }
+
+        function changeAiProvider(provider, selectedModel = null) {
+            if (selectedModel) provider = modelProvider(selectedModel);
+            if (!(provider in PROVIDER_LABELS)) return;
+            const input = document.getElementById('apiKeyInput');
+            if (provider !== activeAiProvider) {
+                providerKeys[activeAiProvider] = input.value.trim();
+                saveBrowserValue(PROVIDER_KEY_STORAGE[activeAiProvider], input.value.trim());
+                activeAiProvider = provider;
+                input.value = providerKeys[provider];
+                input.type = 'password';
+                document.getElementById('apiKeyEyeIcon').className = 'fa-solid fa-eye text-xs';
+                apiKeyRequired = true;
+                document.getElementById('apiKeySection').classList.remove('hidden');
+                populateProviderModels(provider, selectedModel);
+                saveBrowserValue(PROVIDER_STORAGE_KEY, provider);
+                checkApiKeyStatus();
+                loadAvailableModels();
+            } else if (selectedModel) {
+                const select = document.getElementById('modelSelect');
+                if (!Array.from(select.options).some(option => option.value === selectedModel)) {
+                    document.getElementById(`${provider}ModelsGroup`).appendChild(new Option(selectedModel, selectedModel));
+                }
+                select.value = selectedModel;
+            }
+            updateProviderKeyLabel();
+            updateApiKeyIndicator();
+            updateCommandPreview();
+        }
+
         function restoreSavedMapInputs() {
             try {
-                document.getElementById('apiKeyInput').value = localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+                activeAiProvider = localStorage.getItem(PROVIDER_STORAGE_KEY) === 'deepseek' ? 'deepseek' : 'gemini';
+                for (const provider of Object.keys(providerKeys)) {
+                    providerKeys[provider] = localStorage.getItem(PROVIDER_KEY_STORAGE[provider]) || '';
+                }
+                document.getElementById('apiKeyInput').value = providerKeys[activeAiProvider];
                 document.getElementById('topicInput').value = localStorage.getItem(MAP_TOPIC_STORAGE_KEY) || '';
             } catch {
                 // Use empty fields when browser storage is unavailable.
@@ -1317,12 +1437,15 @@
 
         // --- API key status / input ---
         async function checkApiKeyStatus() {
+            const provider = activeAiProvider;
             try {
-                const res = await fetch('/api/status');
+                const res = await fetch(`/api/status?provider=${provider}`);
                 if (!res.ok) throw new Error('status endpoint unavailable');
                 const data = await res.json();
+                if (provider !== activeAiProvider) return;
                 apiKeyRequired = !!data.needs_api_key;
             } catch (err) {
+                if (provider !== activeAiProvider) return;
                 // If we can't determine status, be safe and assume no .env key.
                 apiKeyRequired = true;
                 logToConsole(`[Warning] Could not read /api/status (${err.message}). Assuming API key is required.`, 'warn');
@@ -1332,10 +1455,10 @@
 
             if (apiKeyRequired) {
                 section.classList.remove('hidden');
-                logToConsole('[Info] No .env API key detected — please enter your Gemini API key above.', 'warn');
+                logToConsole(`[Info] Enter your ${PROVIDER_LABELS[provider]} API key above.`, 'warn');
             } else {
                 section.classList.add('hidden');
-                logToConsole('[Info] Server has a Gemini API key from .env — no key input needed.', 'info');
+                logToConsole(`[Info] Server has a ${PROVIDER_LABELS[provider]} API key — no key input needed.`, 'info');
             }
 
             updateApiKeyIndicator();
@@ -1391,6 +1514,8 @@
         }
 
         async function loadAvailableModels() {
+            const provider = activeAiProvider;
+            const version = ++modelListVersion;
             const select = document.getElementById('modelSelect');
             if (!select) return;
             const apiKey = (document.getElementById('apiKeyInput')?.value || '').trim();
@@ -1398,24 +1523,28 @@
                 const res = await fetch('/api/models', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(apiKey ? { api_key: apiKey } : {})
+                    body: JSON.stringify({provider, ...(apiKey ? {api_key: apiKey} : {})})
                 });
                 const data = await res.json();
+                if (provider !== activeAiProvider || version !== modelListVersion) return;
                 if (!res.ok || data.status !== 'success' || !Array.isArray(data.models) || data.models.length === 0) {
                     return;
                 }
                 const prev = select.value;
-                select.replaceChildren();
-                data.models.forEach(modelId => {
+                const models = data.models.filter(model => typeof model === 'string' && modelProvider(model) === provider);
+                if (!models.length) { populateProviderModels(provider); return; }
+                const group = document.getElementById(`${provider}ModelsGroup`);
+                group.replaceChildren();
+                models.forEach(modelId => {
                     const opt = document.createElement('option');
                     opt.value = modelId;
                     opt.textContent = modelId;
-                    select.appendChild(opt);
+                    group.appendChild(opt);
                 });
-                if (data.models.includes(prev)) {
+                if (models.includes(prev)) {
                     select.value = prev;
                 } else {
-                    const preferred = data.models.find(m => m.includes('flash')) || data.models[0];
+                    const preferred = models.find(m => m.includes('flash')) || models[0];
                     select.value = preferred;
                 }
                 updateCommandPreview();
@@ -1424,11 +1553,11 @@
             }
         }
 
-        async function syncLatestMapToStudioStorage(imageUrl) {
+        async function syncLatestMapToStudioStorage(imageUrl, topic = '') {
             if (!imageUrl || typeof StudioStorage === 'undefined' || !StudioStorage.setAsset) return;
             try {
                 const blob = await (await fetch(imageUrl)).blob();
-                await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', { type: 'image/png' }));
+                await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', { type: 'image/png' }), {topic});
             } catch (_) {
                 // Ignore storage quota or fetch errors during preview sync
             }
@@ -1470,12 +1599,19 @@
                 dlBtn.addEventListener('click', () => downloadBatchResult(idx));
 
                 row.appendChild(selectBtn);
+                if (item.duration_s !== undefined && item.duration_s !== null) {
+                    const timeBadge = document.createElement('span');
+                    timeBadge.className = 'text-[10px] font-mono text-slate-400 shrink-0';
+                    timeBadge.textContent = `${item.duration_s}s`;
+                    row.appendChild(timeBadge);
+                }
                 row.appendChild(dlBtn);
                 list.appendChild(row);
             });
         }
 
         function restoreBatchResultParameters(item) {
+            changeAiProvider(item.provider || modelProvider(item.model), item.model);
             for (const name of ['mode', 'map_type', 'extra_option']) {
                 const input = Array.from(document.getElementsByName(name))
                     .find(input => input.value === item[name]);
@@ -1516,7 +1652,7 @@
             if (item.analysis) {
                 applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
             }
-            syncLatestMapToStudioStorage(item.image_url);
+            syncLatestMapToStudioStorage(item.image_url, item.prompt);
             showToast(`Viewing #${item.index}: ${item.prompt}`, 'info');
         }
 
@@ -1531,34 +1667,103 @@
             a.remove();
         }
 
-        function downloadAllBatchResults() {
+        async function downloadAllBatchResults() {
             if (!lastBatchResults.length) return;
-            lastBatchResults.forEach((item, idx) => {
-                setTimeout(() => downloadBatchResult(idx), idx * 180);
-            });
-            showToast(`Downloading ${lastBatchResults.length} maps...`, 'success');
+            try {
+                showToast(`Creating ZIP for ${lastBatchResults.length} maps...`, 'info');
+                const res = await fetch('/api/download_batch_zip', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        items: lastBatchResults.map(item => ({
+                            image_url: item.image_url,
+                            prompt: item.prompt,
+                            filename: item.filename,
+                        })),
+                    }),
+                });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || 'Failed to create ZIP archive');
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'automap_batch.zip';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                showToast(`Downloaded ${lastBatchResults.length} maps as ZIP!`, 'success');
+            } catch (err) {
+                showToast(`ZIP download failed: ${err.message}`, 'error');
+            }
         }
 
-        async function handleIdeasFileSelected(event) {
-            const file = event.target?.files?.[0];
+        async function loadIdeasFile(file) {
             const badge = document.getElementById('ideasFileBadge');
+            const labelText = document.getElementById('ideasFileLabelText');
             const btn = document.getElementById('generateBatchBtn');
             if (!file) {
                 loadedIdeasFile = { filename: '', text: '' };
-                if (badge) badge.textContent = 'No file';
+                if (badge) {
+                    badge.textContent = 'No file';
+                    badge.className = 'text-[10px] font-mono text-slate-500 truncate max-w-[110px]';
+                    badge.removeAttribute('title');
+                }
+                if (labelText) labelText.textContent = 'Choose or Drop CSV';
                 if (btn) btn.disabled = true;
+                return;
+            }
+            if (!file.name.toLowerCase().endsWith('.csv')) {
+                showToast('Please drop a .csv file', 'warn');
                 return;
             }
             try {
                 const text = await file.text();
                 loadedIdeasFile = { filename: file.name, text };
-                if (badge) badge.textContent = file.name;
+                if (badge) {
+                    badge.textContent = file.name;
+                    badge.title = file.name;
+                    badge.className = 'text-[10px] font-mono text-emerald-400 truncate max-w-[140px]';
+                }
+                if (labelText) labelText.textContent = `Loaded: ${file.name}`;
                 if (btn) btn.disabled = !text.trim();
                 logToConsole(`[Batch] Loaded ideas file "${file.name}" (${text.length} chars). Click "Generate All" to render.`, 'info');
                 showToast(`Loaded "${file.name}" — ready to generate maps!`, 'info');
             } catch (err) {
                 showToast(`Failed to read file: ${err.message}`, 'error');
             }
+        }
+
+        async function handleIdeasFileSelected(event) {
+            await loadIdeasFile(event.target?.files?.[0]);
+        }
+
+        function handleCsvDragOver(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const zone = document.getElementById('csvDropZone');
+            if (zone) zone.classList.add('border-indigo-500', 'bg-indigo-950/30');
+        }
+
+        function handleCsvDragLeave(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const zone = document.getElementById('csvDropZone');
+            if (zone && !zone.contains(event.relatedTarget)) {
+                zone.classList.remove('border-indigo-500', 'bg-indigo-950/30');
+            }
+        }
+
+        async function handleCsvDrop(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const zone = document.getElementById('csvDropZone');
+            if (zone) zone.classList.remove('border-indigo-500', 'bg-indigo-950/30');
+            const file = event.dataTransfer?.files?.[0];
+            await loadIdeasFile(file);
         }
 
         async function generateMapsFromFile() {
@@ -1569,58 +1774,180 @@
             const state = getFormState();
             const btn = document.getElementById('generateBatchBtn');
             const loadingEl = document.getElementById('loadingOverlay');
+            const stageEl = document.getElementById('loadingStage');
             if (btn) btn.disabled = true;
             if (loadingEl) loadingEl.classList.remove('hidden');
-            startLoadingStages();
+
+            let progressWrap = document.getElementById('batchProgressWrap');
+            if (!progressWrap && loadingEl) {
+                progressWrap = document.createElement('div');
+                progressWrap.id = 'batchProgressWrap';
+                progressWrap.className = 'w-64 mt-3';
+                progressWrap.innerHTML = `
+                    <div class="flex justify-between text-[11px] font-mono text-slate-300 mb-1">
+                        <span id="batchProgressLabel">Parsing CSV...</span>
+                        <span id="batchProgressPct">0%</span>
+                    </div>
+                    <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                        <div id="batchProgressFill" class="h-full bg-indigo-500 transition-all duration-200" style="width: 0%"></div>
+                    </div>
+                `;
+                loadingEl.appendChild(progressWrap);
+            }
+            const updateProgress = (done, total, label) => {
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                const fill = document.getElementById('batchProgressFill');
+                const lbl = document.getElementById('batchProgressLabel');
+                const pctEl = document.getElementById('batchProgressPct');
+                if (fill) fill.style.width = `${pct}%`;
+                if (lbl) lbl.textContent = label || `${done}/${total} maps`;
+                if (pctEl) pctEl.textContent = `${pct}%`;
+                if (stageEl) stageEl.textContent = label || `Generating ${done}/${total} maps...`;
+            };
 
             try {
-                const res = await fetch('/api/generate_batch', {
+                const useParallel = document.getElementById('batchParallelToggle')?.checked !== false;
+                if (!useParallel) {
+                    updateProgress(0, 1, 'Running single batch request...');
+                    const res = await fetch('/api/generate_batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ...state,
+                            filename: loadedIdeasFile.filename,
+                            ideas_text: loadedIdeasFile.text
+                        })
+                    });
+                    const data = await res.json();
+                    if (!res.ok || data.status !== 'success') {
+                        throw new Error(data.error || 'Batch generation failed');
+                    }
+                    const okItems = (data.results || []).filter(r => r.status === 'success' && r.image_url);
+                    okItems.forEach(item => {
+                        addToHistory(
+                            {
+                                ...state,
+                                topic: item.prompt,
+                                mode: item.mode || state.mode,
+                                map_type: item.map_type || state.map_type,
+                                gsm: item.gsm ?? state.gsm,
+                                extra_option: item.extra_option || state.extra_option,
+                                model: item.model || state.model,
+                                provider: item.provider || modelProvider(item.model || state.model),
+                                font: item.font || state.font,
+                                palette_theme: item.palette_theme || state.palette_theme,
+                                temperature: item.temperature ?? state.temperature,
+                            },
+                            `[batch] ${item.filename}`,
+                            {
+                                image_url: item.image_url,
+                                analysis: item.analysis || null,
+                                map_values: item.map_values || null,
+                            }
+                        );
+                        logToConsole(`[Batch ${item.index}/${data.total}] Generated "${item.prompt}" -> ${item.filename}`, 'success');
+                    });
+                    (data.results || []).filter(r => r.status !== 'success').forEach(item => {
+                        logToConsole(`[Batch ${item.index}/${data.total}] Failed "${item.prompt}": ${item.error}`, 'warn');
+                    });
+                    updateProgress(data.total || okItems.length, data.total || okItems.length, `Done (${data.succeeded}/${data.total})`);
+                    renderBatchResultsPanel(okItems);
+                    if (okItems.length > 0) {
+                        selectBatchResult(okItems.length - 1);
+                    }
+                    showToast(`Generated ${data.succeeded}/${data.total} maps from "${loadedIdeasFile.filename}"!`, 'success');
+                    return;
+                }
+
+                updateProgress(0, 1, 'Parsing CSV...');
+                const parseRes = await fetch('/api/parse_batch_csv', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        ...state,
                         filename: loadedIdeasFile.filename,
                         ideas_text: loadedIdeasFile.text
                     })
                 });
-                const data = await res.json();
-                if (!res.ok || data.status !== 'success') {
-                    throw new Error(data.error || 'Batch generation failed');
+                const parseData = await parseRes.json();
+                if (!parseRes.ok || parseData.status !== 'success') {
+                    throw new Error(parseData.error || 'Failed to parse CSV');
                 }
 
-                const okItems = (data.results || []).filter(r => r.status === 'success' && r.image_url);
-                okItems.forEach(item => {
-                    addToHistory(
-                        {
+                const ideas = parseData.ideas || [];
+                const total = ideas.length;
+                let completed = 0;
+                let succeeded = 0;
+                const results = new Array(total);
+                updateProgress(0, total, `Starting ${total} maps (3 parallel)...`);
+
+                let nextIdx = 0;
+                const workerCount = Math.min(3, total);
+                const workers = Array.from({ length: workerCount }, async () => {
+                    while (nextIdx < total) {
+                        const idx = nextIdx++;
+                        const idea = ideas[idx];
+                        const itemPayload = {
                             ...state,
-                            topic: item.prompt,
-                            mode: item.mode || state.mode,
-                            map_type: item.map_type || state.map_type,
-                            gsm: item.gsm ?? state.gsm,
-                            extra_option: item.extra_option || state.extra_option,
-                            model: item.model || state.model,
-                            font: item.font || state.font,
-                            palette_theme: item.palette_theme || state.palette_theme,
-                            temperature: item.temperature ?? state.temperature,
-                        },
-                        `[batch] ${item.filename}`,
-                        {
-                            image_url: item.image_url,
-                            analysis: item.analysis || null,
-                            map_values: item.map_values || null,
+                            topic: idea.prompt,
+                            mode: idea.mode || state.mode,
+                            map_type: idea.map_type || state.map_type,
+                            gsm: idea.gsm ?? state.gsm,
+                            extra_option: idea.extra_option || state.extra_option,
+                            model: idea.model || state.model,
+                            provider: modelProvider(idea.model || state.model),
+                            font: idea.font || state.font,
+                            palette_theme: idea.palette_theme || state.palette_theme,
+                        };
+                        const t0 = performance.now();
+                        try {
+                            const res = await fetch('/api/generate', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(itemPayload)
+                            });
+                            const data = await res.json();
+                            if (!res.ok || data.status !== 'success') {
+                                throw new Error(data.error || 'Generation failed');
+                            }
+                            succeeded++;
+                            const duration_s = ((performance.now() - t0) / 1000).toFixed(1);
+                            const filename = idea.output || `${String(idx + 1).padStart(2, '0')}.png`;
+                            const itemResult = {
+                                index: idx + 1,
+                                status: 'success',
+                                prompt: idea.prompt,
+                                filename,
+                                duration_s,
+                                image_url: data.image_url,
+                                analysis: data.analysis || null,
+                                map_values: data.map_values || null,
+                                ...itemPayload,
+                            };
+                            results[idx] = itemResult;
+                            addToHistory(itemPayload, `[batch] ${filename}`, {
+                                image_url: data.image_url,
+                                analysis: data.analysis || null,
+                                map_values: data.map_values || null,
+                            });
+                            logToConsole(`[Batch ${idx + 1}/${total}] Generated "${idea.prompt}" -> ${filename}`, 'success');
+                        } catch (err) {
+                            results[idx] = { index: idx + 1, status: 'error', prompt: idea.prompt, error: err.message };
+                            logToConsole(`[Batch ${idx + 1}/${total}] Failed "${idea.prompt}": ${err.message}`, 'warn');
+                        } finally {
+                            completed++;
+                            updateProgress(completed, total, `${completed}/${total} maps (${succeeded} ok)`);
                         }
-                    );
-                    logToConsole(`[Batch ${item.index}/${data.total}] Generated "${item.prompt}" -> ${item.filename}`, 'success');
-                });
-                (data.results || []).filter(r => r.status !== 'success').forEach(item => {
-                    logToConsole(`[Batch ${item.index}/${data.total}] Failed "${item.prompt}": ${item.error}`, 'warn');
+                    }
                 });
 
+                await Promise.all(workers);
+
+                const okItems = results.filter(r => r && r.status === 'success' && r.image_url);
                 renderBatchResultsPanel(okItems);
                 if (okItems.length > 0) {
                     selectBatchResult(okItems.length - 1);
                 }
-                showToast(`Generated ${data.succeeded}/${data.total} maps from "${loadedIdeasFile.filename}"!`, 'success');
+                showToast(`Generated ${succeeded}/${total} maps from "${loadedIdeasFile.filename}"!`, 'success');
             } catch (err) {
                 logToConsole(`[Batch Error] ${err.message}`, 'error');
                 showToast(err.message || 'Batch generation failed', 'error');
@@ -1661,6 +1988,9 @@
             const { filling_txt, filling_num } = buildFillingDictionaries();
 
             return {
+                provider: activeAiProvider,
+                web_search: !!document.getElementById('deepseekWebSearchToggle')?.checked,
+                max_search_requests: parseInt(document.getElementById('deepseekMaxSearchInput')?.value || '5', 10) || 5,
                 mode,
                 map_type: mapType,
                 gsm,
@@ -1674,7 +2004,7 @@
                 palette_theme,
                 // Automatic previews are not manual overrides for the next map.
                 ...(!auto_style ? { filling_txt, filling_num } : {}),
-                label_style: { ...labelStyleConfig }
+                label_style: { ...labelStyleConfig, offset_x: Number(document.getElementById('labelOffsetX').value) }
             };
         }
 
@@ -1784,13 +2114,14 @@
                 return;
             }
 
+            if (modelProvider(val) !== activeAiProvider) changeAiProvider(modelProvider(val), val);
             const select = document.getElementById('modelSelect');
             const existing = Array.from(select.options).find(opt => opt.value === val);
             if (!existing) {
                 const option = document.createElement('option');
                 option.value = val;
                 option.textContent = val;
-                select.appendChild(option);
+                document.getElementById(`${activeAiProvider}ModelsGroup`).appendChild(option);
             }
             select.value = val;
 
@@ -1871,7 +2202,7 @@
 
             // If the server has no .env key, a key must be entered in the form.
             if (apiKeyRequired && !state.api_key) {
-                logToConsole('[Error] API key is required. Enter your Gemini API key in the form.', 'error');
+                logToConsole(`[Error] Enter your ${PROVIDER_LABELS[activeAiProvider]} API key in the form.`, 'error');
                 showToast("Please enter your Gemini API key first.", "error");
                 document.getElementById('apiKeyInput').focus();
                 return;
@@ -1931,7 +2262,7 @@
                     });
                     try {
                         const blob = await (await fetch(result.image_url)).blob();
-                        await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}));
+                        await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}), {topic: state.topic});
                         showToast("Map generated & auto-styled! Ready in Video Studio.", "success");
                     } catch (error) {
                         showToast("Map generated, but automatic transfer could not be saved. Download it to use in Video Studio.", "warn");
@@ -2035,6 +2366,40 @@
             if (isAuto && lastMapValues) return autoDetectMapColorsAndStyle(true);
         }
 
+        const PALETTE_PREVIEW_SWATCHES = {
+            auto: ['#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa'],
+            viridis: ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725'],
+            heatmap: ['#1d4ed8', '#10b981', '#f59e0b', '#ef4444', '#991b1b'],
+            emerald_gold: ['#fb7185', '#fbbf24', '#34d399', '#10b981', '#065f46'],
+            festive: ['#2563eb', '#16a34a', '#eab308', '#dc2626', '#9333ea'],
+            oceanic: ['#38bdf8', '#0284c7', '#1d4ed8', '#4f46e5', '#7c3aed'],
+            categorical: ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'],
+            greens: ['#dcfce7', '#86efac', '#22c55e', '#15803d', '#14532d'],
+            blues: ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a'],
+            reds: ['#fee2e2', '#fca5a5', '#ef4444', '#b91c1c', '#7f1d1d'],
+            oranges: ['#ffedd5', '#fdba74', '#f97316', '#c2410c', '#7c2d12'],
+            yellows: ['#fef9c3', '#fde047', '#eab308', '#a16207', '#713f12'],
+            purples: ['#f3e8ff', '#d8b4fe', '#a855f7', '#7e22ce', '#581c87'],
+            teals: ['#ccfbf1', '#5eead4', '#14b8a6', '#0f766e', '#134e4a'],
+            pinks: ['#fce7f3', '#f9a8d4', '#ec4899', '#be185d', '#831843'],
+            sunset: ['#7c2d18', '#c2410c', '#ea580c', '#f59e0b', '#fde047'],
+            ocean: ['#0c4a6e', '#0369a1', '#0284c7', '#38bdf8', '#7dd3fc'],
+            emerald: ['#064e3b', '#047857', '#10b981', '#34d399', '#a7f3d0'],
+            neon: ['#ec4899', '#8b5cf6', '#06b6d4', '#10b981', '#facc15'],
+            pastel: ['#93c5fd', '#c4b5fd', '#a7f3d0', '#fde68a', '#fda4af'],
+            monochrome: ['#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1'],
+        };
+
+        function applyPalettePreviewToEmptyRules(theme) {
+            const swatches = PALETTE_PREVIEW_SWATCHES[theme] || PALETTE_PREVIEW_SWATCHES.auto;
+            fillingTxtRules.forEach((rule, idx) => {
+                rule.hex = swatches[idx % swatches.length];
+            });
+            fillingNumRules.forEach((rule, idx) => {
+                rule.hex = swatches[idx % swatches.length];
+            });
+        }
+
         function onPaletteThemeChange(theme = document.getElementById('fillingPaletteTheme').value) {
             document.getElementById('fillingPaletteTheme').value = theme;
             try {
@@ -2048,6 +2413,7 @@
                 return autoDetectMapColorsAndStyle(true);
             } else {
                 cancelPaletteAnalysis();
+                applyPalettePreviewToEmptyRules(theme);
                 renderFillingStudio();
             }
         }
@@ -2058,6 +2424,7 @@
                 const select = document.getElementById('fillingPaletteTheme');
                 if (saved && Array.from(select.options).some(option => option.value === saved)) {
                     select.value = saved;
+                    applyPalettePreviewToEmptyRules(saved);
                 }
             } catch {
                 // Fall back to Auto if storage is blocked.
@@ -2077,6 +2444,15 @@
         function useManualFillingRules() {
             cancelPaletteAnalysis();
             document.getElementById('autoStyleFromMapToggle').checked = false;
+        }
+
+        function updateLabelOffset(value, persist = true) {
+            const parsed = Number(value);
+            const offset = Number.isFinite(parsed) ? Math.max(-500, Math.min(500, Math.round(parsed))) : 0;
+            document.getElementById('labelOffsetX').value = offset;
+            document.getElementById('labelOffsetXValue').textContent = `${offset > 0 ? '+' : ''}${offset} px`;
+            labelStyleConfig.offset_x = offset;
+            if (persist) saveBrowserValue(LABEL_OFFSET_STORAGE_KEY, String(offset));
         }
 
         function updateLabelStyleField(field, val) {
@@ -2129,6 +2505,7 @@
                     ...labelStyleConfig,
                     ...analysis.label_style
                 };
+                if (analysis.label_style.offset_x !== undefined) updateLabelOffset(analysis.label_style.offset_x);
             }
 
             const statsBar = document.getElementById('detectedMapStatsBar');
@@ -2268,12 +2645,15 @@
             btn.disabled = busy || paletteAnalysisPending || !paletteAnalysisReady;
             btn.setAttribute('aria-busy', String(busy));
             document.getElementById('fillingPaletteTheme').disabled = busy;
+            document.getElementById('labelOffsetX').disabled = busy;
             document.getElementById('openFillingStudioBtn').disabled = busy;
             document.getElementById('mapRepaintButtonLabel').textContent = busy
                 ? 'Re-painting…' : 'Apply & Re-Paint Current Map';
             document.getElementById('mapRepaintIcon').className = busy
                 ? 'fa-solid fa-circle-notch animate-spin' : 'fa-solid fa-paintbrush';
             document.getElementById('mapRepaintStatus').classList.toggle('hidden', !busy);
+            document.getElementById('mapRepaintOverlay').classList.toggle('hidden', !busy);
+            document.getElementById('mapViewport').setAttribute('aria-busy', String(busy));
         }
 
         async function restyleCurrentMapFromStudio() {
@@ -2314,7 +2694,7 @@
                 logToConsole('[Auto-Style] Re-painted active map with updated Color Filling Studio rules & typography style.', 'success');
                 try {
                     const blob = await (await fetch(data.image_url)).blob();
-                    await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}));
+                    await StudioStorage.setAsset('latest-map', new File([blob], 'generated-map.png', {type: 'image/png'}), {topic: state.topic});
                 } catch {
                     logToConsole('[Storage] Map was re-painted, but could not be saved for Video Studio.', 'warn');
                 }
@@ -2400,6 +2780,7 @@
                     stroke_color: labelStyleConfig.stroke_color,
                     stroke_width: labelStyleConfig.stroke_width,
                     auto_fit: labelStyleConfig.auto_fit,
+                    offset_x: Number(document.getElementById('labelOffsetX').value),
                     recommended_font: labelStyleConfig.recommended_font
                 }
             };
@@ -2531,26 +2912,73 @@
             showToast("Console output cleared", "info");
         }
 
+        function queueHistoryWrite(operation) {
+            historyWrites = historyWrites.then(operation).catch(() => {
+                document.getElementById('historyStorageStatus').textContent = 'History could not be saved. Kept for this visit only.';
+                logToConsole('[History] Browser storage is unavailable or full. New history is kept for this visit only.', 'warn');
+            });
+        }
+
+        async function restoreRunHistory() {
+            const revision = historyRevision;
+            try {
+                const saved = await StudioStorage.getHistory();
+                if (revision !== historyRevision) return;
+                const entries = new Map(saved.map(entry => [entry.id, entry]));
+                for (const entry of runHistory) entries.set(entry.id, entry);
+                const cutoff = Date.now() - HISTORY_RETENTION_MS;
+                runHistory = [...entries.values()].filter(entry => entry.createdAt >= cutoff)
+                    .sort((a, b) => b.createdAt - a.createdAt);
+                renderRunHistory();
+            } catch {
+                // History remains usable in memory if IndexedDB is blocked.
+            }
+        }
+
+        function pruneRunHistory() {
+            const cutoff = Date.now() - HISTORY_RETENTION_MS;
+            const previousLength = runHistory.length;
+            runHistory = runHistory.filter(entry => entry.createdAt >= cutoff);
+            if (runHistory.length !== previousLength) renderRunHistory();
+            queueHistoryWrite(() => StudioStorage.pruneHistory());
+        }
+
         function clearHistory() {
+            historyRevision++;
             runHistory = [];
-            document.getElementById('historyCountBadge').textContent = '0';
-            document.getElementById('historyList').innerHTML = '<div class="text-xs text-slate-500 col-span-full text-center py-8">No runs yet. Generate your first map!</div>';
+            renderRunHistory();
+            queueHistoryWrite(() => StudioStorage.clearHistory());
             showToast("Run history cleared", "info");
         }
 
         function addToHistory(state, cmd, extra = {}) {
-            runHistory.unshift({
-                time: new Date().toLocaleTimeString(),
-                state: { ...state },
+            const {api_key, ...savedState} = state;
+            const createdAt = Date.now();
+            const entry = {
+                id: `${createdAt}-${Math.random().toString(36).slice(2)}`,
+                createdAt,
+                time: new Date(createdAt).toLocaleString(),
+                state: savedState,
                 cmd,
                 image_url: extra.image_url || null,
                 analysis: extra.analysis || null,
                 map_values: extra.map_values || null
-            });
-            document.getElementById('historyCountBadge').textContent = runHistory.length;
+            };
+            runHistory = [entry, ...runHistory.filter(item => createdAt - item.createdAt <= HISTORY_RETENTION_MS)];
+            renderRunHistory();
+            queueHistoryWrite(() => StudioStorage.addHistory(entry));
+        }
 
+        function renderRunHistory() {
+            document.getElementById('historyCountBadge').textContent = runHistory.length;
             const list = document.getElementById('historyList');
             list.replaceChildren();
+            if (!runHistory.length) {
+                const empty = document.createElement('div');
+                empty.className = 'text-xs text-slate-500 col-span-full text-center py-8';
+                empty.textContent = 'No runs yet. History is saved for 24 hours.';
+                list.appendChild(empty);
+            }
             runHistory.forEach((item, idx) => {
                 const row = document.createElement('div');
                 row.className = 'p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-indigo-500/60 cursor-pointer transition flex items-center gap-2.5';
@@ -2588,8 +3016,15 @@
         function restoreHistoryItem(index) {
             const item = runHistory[index];
             if (!item) return;
+            if (Date.now() - item.createdAt > HISTORY_RETENTION_MS) {
+                pruneRunHistory();
+                showToast('This run has expired after 24 hours.', 'info');
+                return;
+            }
 
             const s = item.state;
+            updateLabelOffset(s.label_style?.offset_x ?? 0);
+            changeAiProvider(s.provider || modelProvider(s.model), s.model);
             const modeRadio = document.querySelector(`input[name="mode"][value="${s.mode}"]`);
             if (modeRadio) modeRadio.checked = true;
             const mapRadio = document.querySelector(`input[name="map_type"][value="${s.map_type}"]`);
@@ -2614,8 +3049,11 @@
                 if (metaBadge) metaBadge.textContent = `Restored (${item.time})`;
                 if (item.analysis) {
                     applyAnalysisToFillingStudio(item.analysis, item.map_values || null, false);
+                } else {
+                    lastMapValues = item.map_values || null;
+                    lastMapAnalysis = null;
                 }
-                syncLatestMapToStudioStorage(item.image_url);
+                syncLatestMapToStudioStorage(item.image_url, s.topic);
             }
 
             updateCommandPreview();
@@ -2649,12 +3087,13 @@
 
         // --- Reset Form ---
         function resetForm() {
+            updateLabelOffset(0);
             updateAiTemperature(DEFAULT_AI_TEMPERATURE);
             document.querySelector('input[name="mode"][value="text"]').checked = true;
             document.querySelector('input[name="map_type"][value="default"]').checked = true;
             syncGsm(15);
             document.querySelector('input[name="extra_option"][value="none"]').checked = true;
-            document.getElementById('modelSelect').selectedIndex = 0;
+            changeAiProvider('gemini', fallbackModels.find(model => modelProvider(model) === 'gemini'));
             document.getElementById('fontSelect').selectedIndex = 0;
             document.getElementById('topicInput').value = '';
             updateCommandPreview();

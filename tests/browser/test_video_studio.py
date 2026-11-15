@@ -3,6 +3,8 @@
 Python API and real title rasterization run in-process. These are behavior
 checks, not visual regression tests of external Tailwind/font assets.
 """
+import base64
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 from unittest.mock import Mock
@@ -11,8 +13,24 @@ import pytest
 import requests
 from PIL import Image
 from playwright.sync_api import sync_playwright
+from werkzeug.wrappers import Request
 
 pytestmark = pytest.mark.browser
+
+
+def render_payload(request):
+    """Decode the browser's multipart settings and binary assets for assertions."""
+    assert request.headers['content-type'].startswith('multipart/form-data;')
+    parsed = Request.from_values(method='POST', data=request.post_data_buffer,
+                                 content_type=request.headers['content-type'])
+    try:
+        payload = json.loads(parsed.form['payload'])
+        for field, storage in parsed.files.items():
+            payload[field] = (f'data:{storage.mimetype};base64,'
+                              + base64.b64encode(storage.read()).decode('ascii'))
+        return payload
+    finally:
+        parsed.close()
 
 # Only the layout primitives required for interaction/visibility checks.
 # Product CSS still comes from the actual template.
@@ -61,7 +79,7 @@ def studio(web, worker, monkeypatch):
                     previews.append(request.post_data_json)
                 result = web.app.test_client().open(
                     url.path + ('?' + url.query if url.query else ''),
-                    method=request.method, data=request.post_data,
+                    method=request.method, data=request.post_data_buffer,
                     content_type=request.headers.get('content-type'),
                 )
                 route.fulfill(status=result.status_code, body=result.data,
@@ -96,7 +114,7 @@ def test_custom_overlay_files_follow_enable_switches_in_render_payload(studio, t
     payloads = []
 
     def capture(route):
-        payloads.append(route.request.post_data_json)
+        payloads.append(render_payload(route.request))
         route.fulfill(status=400, json={'error': 'Test render captured'})
 
     page.route('**/api/render_video', capture)
@@ -298,7 +316,7 @@ def test_watermark_upload_text_effects_and_render_payload(studio, tmp_path):
     page.evaluate("renderFiles.bgFileInput = new File(['test'], 'background.mp4', {type:'video/mp4'})")
     payloads = []
     def capture(route):
-        payloads.append(route.request.post_data_json)
+        payloads.append(render_payload(route.request))
         route.fulfill(status=400, content_type='application/json', body='{"error":"Test render captured"}')
     page.route('**/api/render_video', capture)
     page.evaluate("handleRenderVideo({preventDefault(){}})")
@@ -378,7 +396,7 @@ def test_generated_map_transfers_and_respects_manual_selection(studio, tmp_path)
     import json
 
     page, _ = studio
-    def generate_map(size):
+    def generate_map(size, topic="Test map"):
         output = io.BytesIO()
         Image.new('RGBA', size, (20, 160, 90, 255)).save(output, format='PNG')
         data_url = 'data:image/png;base64,' + base64.b64encode(output.getvalue()).decode()
@@ -387,13 +405,14 @@ def test_generated_map_transfers_and_respects_manual_selection(studio, tmp_path)
         page.route('**/api/generate', lambda route: route.fulfill(
             content_type='application/json', body=json.dumps({'status': 'success', 'image_url': data_url})))
         page.goto('http://automap.test/')
-        page.locator('#topicInput').fill('Test map')
+        page.locator('#topicInput').fill(topic)
         page.evaluate('apiKeyRequired = false; handleGenerate({preventDefault(){}})')
     generate_map((450, 300))
     reopen_studio(page)
     page.wait_for_function("document.querySelector('#stageMapPreview').naturalWidth === 450")
     assert page.locator('#mapDropzone .dropzone-name').inner_text().startswith('generated-map.png')
     assert page.evaluate('renderFiles.mapFileInput.type') == 'image/png'
+    assert page.locator('#videoTitleInput').input_value() == 'Test map'
     custom = tmp_path / 'custom.png'
     Image.new('RGBA', (320, 200), 'blue').save(custom)
     page.locator('#mapFileInput').set_input_files(str(custom))
@@ -405,9 +424,15 @@ def test_generated_map_transfers_and_respects_manual_selection(studio, tmp_path)
     page.evaluate('async () => { await pendingAssetSaves; }')
     reopen_studio(page)
     assert page.locator('#stageMapPreview').is_hidden()
-    generate_map((500, 300))
+    generate_map((500, 300), 'Нова тема карти')
     reopen_studio(page)
     page.wait_for_function("document.querySelector('#stageMapPreview').naturalWidth === 500")
+    assert page.locator('#videoTitleInput').input_value() == 'Нова тема карти'
+    page.locator('#videoTitleInput').fill('My edited headline')
+    generate_map((550, 300), 'Another generated topic')
+    reopen_studio(page)
+    page.wait_for_function("document.querySelector('#stageMapPreview').naturalWidth === 550")
+    assert page.locator('#videoTitleInput').input_value() == 'My edited headline'
 
 
 def test_video_settings_and_uploaded_materials_survive_navigation(studio, tmp_path):
@@ -542,7 +567,7 @@ def test_cut_audio_is_restored_and_sent_independently_of_video_title(studio, tmp
     page.locator('#videoTitleInput').fill('A completely different headline')
     payloads = []
     def capture(route):
-        payloads.append(route.request.post_data_json)
+        payloads.append(render_payload(route.request))
         route.fulfill(status=400, content_type='application/json', body='{"error":"Test render captured"}')
     page.route('**/api/render_video', capture)
     page.evaluate('handleRenderVideo({preventDefault(){}})')
@@ -564,7 +589,7 @@ def test_music_is_automatic_when_selected_and_optional_when_absent(studio, tmp_p
     page.locator('#videoTitleInput').fill('Headline')
     requests = []
     def capture(route):
-        requests.append(route.request.post_data_json)
+        requests.append(render_payload(route.request))
         route.fulfill(status=400, content_type='application/json', body='{"error":"Test render captured"}')
     page.route('**/api/render_video', capture)
     page.evaluate('handleRenderVideo({preventDefault(){}})')
@@ -575,3 +600,69 @@ def test_music_is_automatic_when_selected_and_optional_when_absent(studio, tmp_p
     page.evaluate('handleRenderVideo({preventDefault(){}})')
     assert requests[1]['include_audio'] is True
     assert requests[1]['audio_title'] == 'Selected_song'
+
+
+def test_render_progress_bar_follows_worker_and_stops_after_failure(studio):
+    page, _ = studio
+    page.evaluate('async () => { await window.videoStudioReady; }')
+    page.locator('#videoTitleInput').fill('Progress test')
+    page.evaluate('''() => {
+        renderFiles.mapFileInput = new File(['map'], 'map.png', {type:'image/png'});
+        renderFiles.bgFileInput = new File(['video'], 'background.mp4', {type:'video/mp4'});
+    }''')
+    pending = []
+    page.route('**/api/render_video', lambda route: pending.append(route))
+    progress_requests = []
+    def progress(route):
+        progress_requests.append(route.request.url)
+        route.fulfill(json={'status': 'rendering', 'progress': 64, 'phase': 'Encoding video'})
+    page.route('**/api/render_progress/*', progress)
+    page.evaluate('() => { void handleRenderVideo({preventDefault(){}}); }')
+    page.wait_for_function("document.getElementById('renderProgressBar').value === 64")
+    assert page.locator('#renderProgressPercent').inner_text() == '64%'
+    assert page.locator('#renderProgressPhase').inner_text() == 'Encoding video'
+    assert page.locator('#renderBtn').is_disabled()
+    assert len(pending) == 1
+    render_id = render_payload(pending[0].request)['render_id']
+    assert progress_requests[0].endswith(render_id)
+    pending[0].fulfill(status=500, json={'status': 'error', 'error': 'Encoder failed'})
+    page.wait_for_function("!document.getElementById('renderBtn').disabled")
+    assert page.locator('#renderProgressBar').get_attribute('value') != '100'
+    assert 'Encoder failed' in page.locator('#toastMsg').inner_text()
+    assert page.locator('#renderOverlay').is_hidden()
+    assert page.locator('#renderProgressBar').evaluate('el => el.value') == 64
+
+
+def test_slow_map_restore_does_not_replace_a_title_edited_in_the_meantime(studio):
+    page, _ = studio
+    page.evaluate('async () => { await window.videoStudioReady; }')
+    page.evaluate('''() => {
+        const original = StudioStorage.getAsset;
+        let release;
+        const pending = new Promise(resolve => release = resolve);
+        StudioStorage.getAsset = key => key === 'latest-map' ? pending : original(key);
+        window.restoringTitle = restoreVideoStudio();
+        window.releaseLatestMap = release;
+    }''')
+    page.locator('#videoTitleInput').fill('Typed while loading')
+    page.evaluate('''async () => {
+        const canvas = document.createElement('canvas'); canvas.width=80; canvas.height=40;
+        const blob = await new Promise(resolve => canvas.toBlob(resolve));
+        releaseLatestMap({file: new File([blob], 'generated.png', {type:'image/png'}),
+                          topic:'Old generated topic', updatedAt:Date.now()});
+        await restoringTitle;
+    }''')
+    assert page.locator('#videoTitleInput').input_value() == 'Typed while loading'
+
+
+def test_new_stickers_exist_on_both_sides_and_preview_offline(studio):
+    page, previews = studio
+    for side in ('Left', 'Right'):
+        for kind in ('mountain', 'volcano', 'island', 'rainbow', 'moon', 'rain', 'robot', 'satellite',
+                     'laptop', 'graduation', 'medal', 'cat', 'dog', 'fish', 'burger', 'train'):
+            assert page.locator(f'#top{side}StickerSelect option[value="{kind}"]').count() == 1
+    page.locator('#topLeftStickerSelect').select_option('robot')
+    page.locator('#topRightStickerSelect').select_option('mountain')
+    page.wait_for_function("document.querySelector('#stageTopLeftSticker img')?.naturalWidth > 0")
+    page.wait_for_function("document.querySelector('#stageTopRightSticker img')?.naturalWidth > 0")
+    assert page.locator('#stageCompositeBox').evaluate("el => el.classList.contains('has-top-stickers')")

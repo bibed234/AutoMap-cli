@@ -11,8 +11,19 @@ from functools import lru_cache
 from urllib.parse import urlencode, urlsplit
 
 from flask import Flask, request, jsonify, send_file
+from render_progress import RenderProgress
 
 app = Flask(__name__)
+render_progress = RenderProgress()
+
+
+@app.get('/api/render_progress/<uuid:render_id>')
+def get_render_progress(render_id):
+    """Return current progress for ``render_id`` with ``no-store`` so polling never reads stale cache."""
+    result = render_progress.snapshot(str(render_id))
+    response = jsonify(result if result else {'error': 'Render not found.'})
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200 if result else 404
 
 STORAGE_DIR = "/tmp/automap_storage"
 DOWNLOADS = os.path.join(STORAGE_DIR, "downloads")
@@ -577,6 +588,7 @@ def _resolve_auto_stickers(title: str) -> tuple[str, str]:
         return ('globe', 'pin')
     best_pair: tuple[str, str] | None = None
     best_count = 0
+    # Score each theme by distinct keyword hits; ties keep the earlier (higher-priority) theme.
     for keywords, pair in _AUTO_STICKER_THEMES:
         count = 0
         for kw in keywords:
@@ -815,6 +827,14 @@ def _style_generated_sticker(icon_canvas, gen_style: str, size: int):
     return stamp.resize((size, size), Image.Resampling.LANCZOS)
 
 
+from extra_stickers import draw_extra_sticker
+
+
+def _draw_extra_sticker(kind, draw, s, outline, ow):
+    """Delegate extended procedural sticker drawing to extra_stickers.py."""
+    return draw_extra_sticker(kind, draw, s, outline, ow, star_polygon_fn=_star_polygon)
+
+
 def _sticker_image(kind: str, size: int = 140, effects: bool = True, allow_remote: bool = False):
     """Render a decorative top-corner sticker (library Twemoji or procedural generated style)."""
     import numpy as np
@@ -861,7 +881,9 @@ def _sticker_image(kind: str, size: int = 140, effects: bool = True, allow_remot
     outline = (18, 18, 24, 255)
     ow = 4 * scale
 
-    if kind == 'santa':
+    if _draw_extra_sticker(kind, draw, s, outline, ow):
+        pass
+    elif kind == 'santa':
         # Fluffy white beard base
         draw.ellipse((s * 0.16, s * 0.44, s * 0.84, s * 0.94), fill=(250, 252, 255, 255), outline=outline, width=ow)
         draw.ellipse((s * 0.12, s * 0.52, s * 0.46, s * 0.84), fill=(250, 252, 255, 255), outline=outline, width=ow)
@@ -1185,6 +1207,95 @@ def _apply_clip_fade_in(clip, total_duration: float, fade_start: float = 0.0, fa
     return clip.with_duration(total_duration).with_mask(mask_clip)
 
 
+def _x264_preset() -> str:
+    """x264 speed preset; ``VIDEO_X264_PRESET`` overrides the fast default."""
+    allowed = ('ultrafast', 'superfast', 'veryfast', 'faster', 'fast',
+               'medium', 'slow', 'slower', 'veryslow')
+    preset = os.environ.get('VIDEO_X264_PRESET', 'veryfast').strip().lower()
+    return preset if preset in allowed else 'veryfast'
+
+
+def _render_threads() -> int:
+    """Encoder thread count; ``VIDEO_RENDER_THREADS`` overrides the CPU count."""
+    try:
+        threads = int(os.environ.get('VIDEO_RENDER_THREADS', '0'))
+    except ValueError:
+        threads = 0
+    return threads if threads > 0 else (os.cpu_count() or 2)
+
+
+def _prepare_background(src: str, dst: str, duration: float, size=(1080, 1920),
+                        effects: bool = True) -> None:
+    """Trim, cover-scale, center-crop and optionally soften the background in FFmpeg.
+
+    This replaces per-frame MoviePy resizing and the Pillow blur (downscale to
+    a quarter, Gaussian blur radius 2, upscale) with one native pass.  The
+    intermediate is encoded near-losslessly so the final encode sees the same
+    pixels the Python path produced.
+    """
+    from moviepy.config import FFMPEG_BINARY
+
+    w, h = size
+    filters = [f'scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos',
+               f'crop={w}:{h}']
+    if effects:
+        filters += [f'scale={w // 4}:{h // 4}:flags=bicubic', 'gblur=sigma=2',
+                    f'scale={w}:{h}:flags=bicubic']
+    filters.append('format=yuv420p')
+    command = [FFMPEG_BINARY, '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+               '-i', src, '-t', f'{duration:.3f}', '-an', '-vf', ','.join(filters),
+               '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '10',
+               '-threads', str(_render_threads()), dst]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f'Background preprocessing failed: {result.stderr.strip()[-300:]}')
+
+
+def _flatten_static_layers(clips, size, dynamic, duration):
+    """Merge consecutive static layers into single RGBA foreground clips.
+
+    ``dynamic`` holds ids of clips that change over time (background, fades,
+    veil).  Static runs between them are alpha-composited once with Pillow in
+    the same order and with the same positioning rules MoviePy uses, so each
+    output frame blends one foreground instead of many layers.
+    """
+    import numpy as np
+    from PIL import Image
+    from moviepy import ImageClip
+    from moviepy.tools import compute_position
+
+    out, canvas = [], None
+
+    def flush():
+        nonlocal canvas
+        if canvas is not None:
+            out.append(ImageClip(np.array(canvas)).with_duration(duration).with_position((0, 0)))
+            canvas = None
+
+    for clip in clips:
+        if id(clip) in dynamic:
+            flush()
+            out.append(clip)
+            continue
+        frame = np.asarray(clip.get_frame(0))
+        if frame.dtype != np.uint8:
+            frame = np.clip(frame, 0, 255).astype(np.uint8)
+        layer = Image.fromarray(frame[:, :, :3]).convert('RGBA')
+        if clip.mask is not None:
+            alpha = np.clip(np.asarray(clip.mask.get_frame(0)) * 255, 0, 255).astype(np.uint8)
+            layer.putalpha(Image.fromarray(alpha))
+        elif frame.ndim == 3 and frame.shape[2] == 4:
+            layer.putalpha(Image.fromarray(frame[:, :, 3]))
+        pos = compute_position(layer.size, size, clip.pos(0), clip.relative_pos)
+        if canvas is None:
+            canvas = Image.new('RGBA', size, (0, 0, 0, 0))
+        placed = Image.new('RGBA', size, (0, 0, 0, 0))
+        placed.paste(layer, tuple(int(v) for v in pos))
+        canvas = Image.alpha_composite(canvas, placed)
+    flush()
+    return out
+
+
 @app.route('/api/video_title_preview', methods=['POST'])
 def video_title_preview():
     from PIL import Image
@@ -1235,6 +1346,7 @@ def video_title_preview():
 
 @app.route('/api/render_video', methods=['POST'])
 @app.route('/api/render_video/', methods=['POST'])
+@render_progress.track
 def make_video() -> tuple[object, int]:
     cleanup_old_files()
     data: dict[str, object] = request.get_json(silent=True) or {}
@@ -1335,7 +1447,7 @@ def make_video() -> tuple[object, int]:
     # A fresh URL prevents the player from reusing an older, silent render.
     output_path = os.path.join(RENDER_DIR, f"{safe_title}_{uuid.uuid4().hex[:12]}_final.mp4")
 
-    map_path = bg_path = audio_temp_path = None
+    map_path = bg_path = audio_temp_path = prepared_bg_path = None
     media_resources = []
     try:
         from moviepy import (VideoFileClip, CompositeVideoClip,
@@ -1365,30 +1477,22 @@ def make_video() -> tuple[object, int]:
             TARGET = 8.0
         TARGET = max(1.0, min(30.0, TARGET))
 
-        background_video = VideoFileClip(bg_path)
-        media_resources.append(background_video)
-        background_video = background_video.without_audio()
-        bg_duration = min(TARGET, background_video.duration or TARGET)
-        background_video = background_video.subclipped(0, bg_duration)
+        source_video = VideoFileClip(bg_path, audio=False)
+        source_duration = source_video.duration or TARGET
+        source_video.close()
+        bg_duration = min(TARGET, source_duration)
 
-        # Fill the portrait frame without stretching the source footage.
+        # Fill the portrait frame without stretching the source footage; FFmpeg
+        # scales, crops and softens natively instead of per frame in Python.
         canvas_w, canvas_h = 1080, 1920
-        bg_scale = max(canvas_w / background_video.w, canvas_h / background_video.h)
-        background_video = background_video.resized(bg_scale).cropped(
-            x_center=background_video.w * bg_scale / 2,
-            y_center=background_video.h * bg_scale / 2,
-            width=canvas_w, height=canvas_h,
-        )
-
         effects = data.get('visual_effects', True) is not False
-        if effects:
-            from PIL import ImageFilter
-            # Blur a smaller frame for a soft background without blurring the overlays.
-            def soften(frame):
-                small = Image.fromarray(frame).resize((270, 480))
-                return np.array(small.filter(ImageFilter.GaussianBlur(2)).resize((1080, 1920)))
-            import numpy as np
-            background_video = background_video.image_transform(soften)
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as prepared_temp:
+            prepared_bg_path = prepared_temp.name
+        _prepare_background(bg_path, prepared_bg_path, bg_duration, (canvas_w, canvas_h), effects)
+        background_video = VideoFileClip(prepared_bg_path, audio=False)
+        media_resources.append(background_video)
+        background_video = background_video.with_duration(bg_duration)
+        dynamic_layers = {id(background_video)}
 
         # Darken the edges and the area behind the title for readable white text.
         import numpy as np
@@ -1473,6 +1577,7 @@ def make_video() -> tuple[object, int]:
             fade_dur = min(0.6, max(0.15, bg_duration - fade_start)) if bg_duration > 0.4 else 0.0
             subscribe_clip = _apply_clip_fade_in(subscribe_clip, bg_duration, fade_start=fade_start, fade_duration=fade_dur)
             subscribe_clip = subscribe_clip.with_position(('center', accent_top))
+            dynamic_layers.add(id(subscribe_clip))
             accent_height = max(accent_height, subscribe_clip.h)
         map_top = accent_top + accent_height + gap if accent_height else accent_top
 
@@ -1527,7 +1632,10 @@ def make_video() -> tuple[object, int]:
                 stars_start = min(1.8, bg_duration * 0.25)
                 stars_clip = _apply_clip_fade_in(stars_clip, bg_duration, fade_start=stars_start, fade_duration=0.5)
             stars_y = 1805 if watermark_text else 1785
-            clips.append(stars_clip.with_position(('center', stars_y)))
+            stars_clip = stars_clip.with_position(('center', stars_y))
+            if bg_duration > 1.8:
+                dynamic_layers.add(id(stars_clip))
+            clips.append(stars_clip)
         if intro_fade:
             from moviepy import VideoClip
             fade_in_dur = min(0.75, max(0.2, bg_duration * 0.3))
@@ -1542,8 +1650,12 @@ def make_video() -> tuple[object, int]:
                 return base_ones * max(0.0, min(1.0, alpha))
 
             veil_mask = VideoClip(_veil_mask, is_mask=True, duration=fade_in_dur)
-            clips.append(intro_veil.with_mask(veil_mask))
+            intro_veil = intro_veil.with_mask(veil_mask)
+            dynamic_layers.add(id(intro_veil))
+            clips.append(intro_veil)
 
+        # Static layers are composed once into a single RGBA foreground.
+        clips = _flatten_static_layers(clips, (canvas_w, canvas_h), dynamic_layers, bg_duration)
         final_clip = CompositeVideoClip(clips, size=(canvas_w, canvas_h))
         media_resources.append(final_clip)
 
@@ -1557,12 +1669,20 @@ def make_video() -> tuple[object, int]:
         else:
             final_clip = final_clip.with_duration(bg_duration)
 
+        # Draft renders keep the 1080x1920 layout and scale only at encode time.
+        encode_options = {}
+        if codec == 'libx264':
+            encode_options['preset'] = _x264_preset()
+        if data.get('draft') is True:
+            encode_options['ffmpeg_params'] = ['-vf', 'scale=720:1280:flags=bicubic']
         final_clip.write_videofile(
             output_path,
             codec=codec,
             audio_codec="aac",
             fps=30,
-            logger=None,
+            threads=_render_threads(),
+            logger=render_progress.logger(),
+            **encode_options,
         )
 
         return jsonify({
@@ -1583,7 +1703,7 @@ def make_video() -> tuple[object, int]:
             except Exception:
                 pass
         # Always clean up the temp input files.
-        for p in (map_path, bg_path, audio_temp_path):
+        for p in (map_path, bg_path, audio_temp_path, prepared_bg_path):
             if p and os.path.exists(p):
                 try:
                     os.remove(p)

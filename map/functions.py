@@ -2,8 +2,10 @@ import csv
 import io
 import json
 import math
+import os
 import re
 import sys
+import requests
 try:
     import httpx2 as httpx
 except ImportError:  # Older google-genai releases use the original transport.
@@ -20,6 +22,24 @@ from ast import literal_eval
 load_dotenv(".env")  # loading .env file
 
 AI_TIMEOUT_MS = 45_000
+DEEPSEEK_API_URL = 'https://api.deepseek.com'
+
+
+def provider_for_model(model):
+    """DeepSeek models use their own endpoint and credentials."""
+    return 'deepseek' if str(model).lower().startswith('deepseek-') else 'gemini'
+
+
+def provider_key_name(provider):
+    """Return the environment/settings key name for the given AI provider."""
+    return 'DEEPSEEK_API_KEY' if provider == 'deepseek' else 'GEMINI_API_KEY'
+
+
+def configured_api_key(provider, settings=None):
+    """Return the configured API key for ``provider``, ignoring empty or ``your_*`` placeholders."""
+    name = provider_key_name(provider)
+    value = (os.environ.get(name) or (settings or {}).get(name) or '').strip()
+    return value if value and not value.lower().startswith('your_') else None
 
 
 class AIServiceError(RuntimeError):
@@ -28,6 +48,166 @@ class AIServiceError(RuntimeError):
     def __init__(self, message, status_code=503):
         super().__init__(message)
         self.status_code = status_code
+
+
+def _deepseek_json(path, api_key, *, payload=None, timeout=45):
+    """Call only the fixed DeepSeek origin; never expose upstream credential errors."""
+    if not api_key:
+        raise AIServiceError('DeepSeek API key required. Set DEEPSEEK_API_KEY or enter it in the web form.', 400)
+    headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/json'}
+    try:
+        if payload is None:
+            response = requests.get(f'{DEEPSEEK_API_URL}/{path}', headers=headers,
+                                    timeout=(10, timeout), allow_redirects=False)
+        else:
+            response = requests.post(f'{DEEPSEEK_API_URL}/{path}', headers=headers, json=payload,
+                                     timeout=(10, timeout), allow_redirects=False)
+    except requests.Timeout as error:
+        raise AIServiceError(f'DeepSeek did not respond within {timeout} seconds. Try again or select another model.', 504) from error
+    except requests.RequestException as error:
+        raise AIServiceError('Could not connect to DeepSeek. Please try again later.', 503) from error
+    try:
+        status = response.status_code
+        if status in (401, 403):
+            raise AIServiceError('DeepSeek rejected the API key. Check your key and account access.', 400)
+        if status == 402:
+            raise AIServiceError('Your DeepSeek account has insufficient balance. Top up your DeepSeek account.', 402)
+        if status == 429:
+            raise AIServiceError('DeepSeek request limit reached. Please try again later.', 429)
+        if status >= 500:
+            raise AIServiceError('DeepSeek is overloaded or temporarily unavailable. Try again shortly or select another model.', 503)
+        if status != 200:
+            raise AIServiceError('DeepSeek could not process the request. Check the selected model and API access.', 400)
+        try:
+            result = response.json()
+        except ValueError as error:
+            raise AIServiceError('DeepSeek returned an invalid response. Please try again.', 502) from error
+        if not isinstance(result, dict) or result.get('error'):
+            raise AIServiceError('DeepSeek could not complete the request. Please try again.', 502)
+        return result
+    finally:
+        response.close()
+
+
+def list_deepseek_models(api_key):
+    """Return sorted ``deepseek-*`` model IDs available for ``api_key``."""
+    result = _deepseek_json('models', api_key, timeout=15)
+    models = result.get('data')
+    if not isinstance(models, list):
+        raise AIServiceError('DeepSeek returned an invalid model list.', 502)
+    return sorted({model['id'] for model in models if isinstance(model, dict)
+                   and isinstance(model.get('id'), str) and model['id'].startswith('deepseek-')})
+
+
+def _web_search_ddg(query, max_results=5):
+    """Fetch top web search snippets from Wikipedia's public search API without external dependencies."""
+    # Use MediaWiki's JSON search API instead of scraping HTML search pages that return HTTP 202 bot challenges.
+    try:
+        resp = requests.get(
+            'https://en.wikipedia.org/w/api.php',
+            params={
+                'action': 'query',
+                'list': 'search',
+                'srsearch': str(query),
+                'srlimit': int(max_results),
+                'format': 'json',
+                'utf8': 1,
+            },
+            headers={'User-Agent': 'AutoMap-cli/1.0 (https://github.com/deltaaa00/AutoMap-cli)'},
+            timeout=(5, 10),
+        )
+        if resp.status_code != 200:
+            return f'Search failed (HTTP {resp.status_code}).'
+        data = resp.json()
+    except (requests.RequestException, ValueError) as err:
+        return f'Search error: {err}'
+
+    results = data.get('query', {}).get('search') or []
+    lines = []
+    for item in results[:max_results]:
+        title = str(item.get('title') or '').strip()
+        snippet = re.sub(r'<[^>]+>', '', str(item.get('snippet') or '')).replace('&quot;', '"').replace('&amp;', '&').strip()
+        if title or snippet:
+            lines.append(f'- {title}: {snippet}' if title and snippet else f'- {title or snippet}')
+    return '\n'.join(lines) if lines else 'No search results found.'
+
+
+def _deepseek_request(prompt, model, api_key=None, *, temperature=None, web_search=False, max_search_requests=5):
+    """Send a chat-completion request to DeepSeek, optionally running a bounded web_search tool loop."""
+    sys_msg = 'Return only a JSON object mapping region names to values. Example: {"ukraine": 42}.'
+    if web_search:
+        sys_msg += ' You have access to the web_search tool—use it to look up accurate, up-to-date facts and statistics before answering.'
+    messages = [
+        {'role': 'system', 'content': sys_msg},
+        {'role': 'user', 'content': prompt},
+    ]
+    payload = {
+        'model': model,
+        'messages': messages,
+        'response_format': {'type': 'json_object'},
+        'thinking': {'type': 'disabled'},
+        'max_tokens': 4096,
+        'stream': False,
+    }
+    if web_search:
+        payload['tools'] = [{
+            'type': 'function',
+            'function': {
+                'name': 'web_search',
+                'description': 'Search the web for up-to-date facts, rankings, and statistics.',
+                'parameters': {
+                    'type': 'object',
+                    'properties': {'query': {'type': 'string', 'description': 'Search query'}},
+                    'required': ['query'],
+                },
+            },
+        }]
+    if temperature is not None:
+        payload['temperature'] = validate_temperature(temperature)
+
+    # Track remaining search calls so the model cannot loop indefinitely on tool_calls.
+    budget = max(1, min(10, int(max_search_requests or 5)))
+    key = api_key or configured_api_key('deepseek')
+    result = _deepseek_json('chat/completions', key, payload=payload)
+
+    while web_search and budget > 0:
+        try:
+            choice = result['choices'][0]
+            msg = choice['message']
+        except (KeyError, IndexError, TypeError) as error:
+            raise AIServiceError('DeepSeek returned no map data. Please try again.', 502) from error
+        tool_calls = msg.get('tool_calls') or []
+        if choice.get('finish_reason') != 'tool_calls' or not tool_calls:
+            break
+
+        # Append the assistant's tool-call turn, then answer each tool call in order.
+        messages.append(msg)
+        for tc in tool_calls:
+            if budget <= 0:
+                messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': 'Search budget reached. Return final JSON now.'})
+                continue
+            budget -= 1
+            try:
+                args = json.loads(tc.get('function', {}).get('arguments') or '{}')
+                q = args.get('query') or prompt
+            except ValueError:
+                q = prompt
+            messages.append({'role': 'tool', 'tool_call_id': tc['id'], 'content': _web_search_ddg(q)})
+
+        # Once the search budget is spent, strip `tools` so DeepSeek must return the final JSON.
+        if budget <= 0:
+            payload.pop('tools', None)
+        result = _deepseek_json('chat/completions', key, payload=payload)
+    try:
+        choice = result['choices'][0]
+        content = choice['message']['content']
+    except (KeyError, IndexError, TypeError) as error:
+        raise AIServiceError('DeepSeek returned no map data. Please try again.', 502) from error
+    if choice.get('finish_reason') == 'length':
+        raise AIServiceError('DeepSeek returned an incomplete map. Try a shorter prompt.', 502)
+    if not isinstance(content, str) or not content.strip():
+        raise AIServiceError('DeepSeek returned no map data. Please try again.', 502)
+    return content
 
 
 def _error(title: str, message: str = ""):
@@ -52,7 +232,7 @@ def validate_temperature(value: object) -> float:
     return temperature
 
 
-def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> str | None:
+def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None, web_search=False, max_search_requests=5) -> str | None:
     """Send a request to the AI model and return the response as a string."""
 
     if mode == 'default' or mode == 'flag':
@@ -76,6 +256,12 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> st
     config = {} if temperature is None else {
         'config': types.GenerateContentConfig(temperature=validate_temperature(temperature)),
     }
+    if provider_for_model(ai_model) == 'deepseek':
+        with log.spinner('Waiting for DeepSeek response...'):
+            return _deepseek_request(
+                prompt_to_ai, ai_model, api_key,
+                temperature=temperature, web_search=web_search, max_search_requests=max_search_requests,
+            )
     try:
         with log.spinner("Waiting for AI response..."):
             # If a key was supplied (e.g. from the web UI when .env is missing),
@@ -123,12 +309,15 @@ def _ai_request(prompt, mode, ai_model, api_key=None, *, temperature=None) -> st
 
 
 def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None, _ai_answer = None,
-               *, temperature: float | None = None) -> dict | None:
+               *, temperature: float | None = None, web_search: bool = False, max_search_requests: int = 5) -> dict | None:
     "handle the AI request and parse the response into a dictionary."
     if _ai_answer is not None:
         request = _ai_answer
     else:
         options = {} if temperature is None else {'temperature': temperature}
+        if web_search:
+            options['web_search'] = True
+            options['max_search_requests'] = max_search_requests
         request = _ai_request(prompt, mode, ai_model, api_key, **options)
 
     # The AI request can fail and return None (the error is already logged).
@@ -167,6 +356,11 @@ def ai_request(prompt: str, mode: str, ai_model: str, api_key: str | None = None
 
 
 def load_filling():
+    """Load text and numeric color-filling rules from ``filling.json`` (or ``filling.template.json``).
+
+    Returns ``(filling_txt, filling_num)`` where ``filling_txt`` maps label strings
+    to RGBA tuples and ``filling_num`` maps ``(low, high)`` numeric bounds to RGBA tuples.
+    """
 
     path = Path(__file__).parent / "filling.json"
     if not path.is_file():

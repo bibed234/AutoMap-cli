@@ -28,7 +28,7 @@ def map_page(web):
             url = urlsplit(request.url)
             if url.hostname == 'automap.test':
                 response = web.app.test_client().open(
-                    url.path, method=request.method, data=request.post_data,
+                    url.path + ('?' + url.query if url.query else ''), method=request.method, data=request.post_data,
                     content_type=request.headers.get('content-type'))
                 route.fulfill(status=response.status_code, body=response.data,
                               content_type=response.content_type)
@@ -78,6 +78,7 @@ def test_auto_preview_is_not_reused_as_manual_generation_rules(map_page):
         route.fulfill(status=500, json={'status': 'error', 'error': 'Stop after inspecting payload'})
 
     page.route('**/api/restyle_map', repaint)
+    page.evaluate('closeFillingStudio()')
     page.click('#restyleCurrentMapBtn')
     page.wait_for_function("!document.getElementById('restyleCurrentMapBtn').disabled")
     assert len(payloads) == 1
@@ -157,9 +158,13 @@ def test_repaint_shows_busy_state_until_image_or_error_is_ready(map_page, status
     page = map_page
     pending = []
     page.route('**/api/restyle_map', lambda route: pending.append(route))
+    page.evaluate('closeFillingStudio()')
     page.click('#restyleCurrentMapBtn')
     page.wait_for_function('mapRepaintPending')
     assert page.locator('#mapRepaintStatus').is_visible()
+    assert page.locator('#mapViewport #mapRepaintOverlay').is_visible()
+    assert 'Re-painting map' in page.locator('#mapRepaintOverlay').inner_text()
+    assert page.locator('#mapViewport').get_attribute('aria-busy') == 'true'
     assert page.locator('#mapRepaintButtonLabel').inner_text() == 'Re-painting…'
     assert page.locator('#restyleCurrentMapBtn').get_attribute('aria-busy') == 'true'
     assert page.locator('#restyleCurrentMapBtn').is_disabled()
@@ -177,6 +182,8 @@ def test_repaint_shows_busy_state_until_image_or_error_is_ready(map_page, status
     pending[0].fulfill(status=status, json=payload)
     page.wait_for_function('!mapRepaintPending')
     assert page.locator('#mapRepaintStatus').is_hidden()
+    assert page.locator('#mapRepaintOverlay').is_hidden()
+    assert page.locator('#mapViewport').get_attribute('aria-busy') == 'false'
     assert page.locator('#restyleCurrentMapBtn').get_attribute('aria-busy') == 'false'
     assert page.locator('#fillingPaletteTheme').is_enabled()
     assert page.locator('#mapRepaintButtonLabel').inner_text() == 'Apply & Re-Paint Current Map'
@@ -410,3 +417,221 @@ def test_generation_failure_shows_actual_error_and_keeps_retry_available(map_pag
     assert error in page.locator('#generationError').inner_text()
     assert error in page.locator('#toastMsg').inner_text()
     assert page.locator('#generateBtn').is_enabled()
+
+
+def stub_provider_model_lists(page):
+    def respond(route):
+        provider = route.request.post_data_json.get('provider', 'gemini')
+        models = ['deepseek-flash', 'deepseek-v4-pro'] if provider == 'deepseek' else ['gemini-3.8-flash']
+        route.fulfill(json={'status': 'success', 'models': models})
+    page.route('**/api/models', respond)
+
+
+def test_provider_groups_and_keys_survive_switches_reload_and_independent_clear(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.evaluate('closeFillingStudio()')
+    assert page.locator('#modelSelect optgroup').count() == 2
+    assert page.locator('#modelSelect optgroup').evaluate_all('(groups) => groups.map(group => group.label)') == ['Gemini', 'DeepSeek']
+    page.locator('#apiKeyInput').fill('gemini-browser-key')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.wait_for_function("activeAiProvider === 'deepseek' && document.getElementById('apiKeyLabel').textContent.includes('DeepSeek')")
+    assert page.locator('#apiKeyInput').input_value() == ''
+    page.locator('#apiKeyInput').fill('deepseek-browser-key')
+    page.reload()
+    page.wait_for_function("activeAiProvider === 'deepseek' && getFormState().model === 'deepseek-flash'")
+    assert page.locator('#apiKeyInput').input_value() == 'deepseek-browser-key'
+    assert page.locator('#apiKeyInput').get_attribute('type') == 'password'
+    assert page.evaluate('getFormState().provider') == 'deepseek'
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'gemini-browser-key'
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('')
+    page.reload()
+    assert page.locator('#apiKeyInput').input_value() == ''
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'gemini-browser-key'
+    assert page.locator('#modelSelect optgroup').count() == 2
+
+
+def test_deepseek_generation_sends_only_active_provider_key(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.evaluate('closeFillingStudio()')
+    page.locator('#apiKeyInput').fill('gemini-do-not-send')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('deepseek-use-this')
+    page.locator('#topicInput').fill('Population of Europe')
+    payloads = []
+    def capture(route):
+        payloads.append(route.request.post_data_json)
+        route.fulfill(status=503, json={'status': 'error', 'error': 'DeepSeek is overloaded. Please try again.'})
+    page.route('**/api/generate', capture)
+    page.click('#generateBtn')
+    page.wait_for_function("!document.getElementById('generateBtn').disabled")
+    assert len(payloads) == 1
+    assert payloads[0]['model'] == 'deepseek-flash'
+    assert payloads[0]['provider'] == 'deepseek'
+    assert payloads[0]['api_key'] == 'deepseek-use-this'
+    assert 'gemini-do-not-send' not in str(payloads)
+    assert 'DeepSeek is overloaded' in page.locator('#generationError').inner_text()
+
+
+def test_server_deepseek_key_hides_input_without_exposing_key(map_page, monkeypatch):
+    page = map_page
+    stub_provider_model_lists(page)
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'server-deepseek-never-expose')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.wait_for_function("activeAiProvider === 'deepseek' && !apiKeyRequired")
+    assert page.locator('#apiKeySection').is_hidden()
+    assert page.locator('#apiKeyInput').input_value() == ''
+    assert 'server-deepseek-never-expose' not in page.content()
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    page.wait_for_function('apiKeyRequired')
+    assert page.locator('#apiKeySection').is_visible()
+
+
+def test_provider_keys_stay_independent_when_storage_is_blocked(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.add_init_script('''Object.defineProperty(window, 'localStorage', {
+        get() { throw new DOMException('Storage blocked', 'SecurityError'); }
+    });''')
+    page.reload()
+    page.locator('#apiKeyInput').fill('gemini-memory')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('deepseek-memory')
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'gemini-memory'
+    page.select_option('#modelSelect', 'deepseek-flash')
+    assert page.locator('#apiKeyInput').input_value() == 'deepseek-memory'
+
+
+def test_history_uses_model_provider_and_its_saved_key(map_page):
+    page = map_page
+    stub_provider_model_lists(page)
+    page.evaluate('closeFillingStudio()')
+    page.locator('#apiKeyInput').fill('gemini-history-key')
+    page.select_option('#modelSelect', 'deepseek-flash')
+    page.locator('#apiKeyInput').fill('deepseek-history-key')
+    page.select_option('#modelSelect', 'gemini-3.8-flash')
+    page.evaluate('''() => {
+        addToHistory({...getFormState(), provider:'gemini', model:'deepseek-flash'}, 'Legacy history');
+        restoreHistoryItem(0);
+    }''')
+    assert page.evaluate('getFormState().provider') == 'deepseek'
+    assert page.locator('#apiKeyInput').input_value() == 'deepseek-history-key'
+    assert page.locator('#modelSelect').input_value() == 'deepseek-flash'
+
+
+def test_label_shift_and_repaint_are_accessible_next_to_generate_without_ai(map_page):
+    page = map_page
+    page.evaluate('closeFillingStudio()')
+    assert page.locator('#cliForm #restyleCurrentMapBtn').count() == 1
+    assert page.locator('#fillingStudioModal #restyleCurrentMapBtn').count() == 0
+    assert page.locator('#restyleCurrentMapBtn').is_visible()
+    payloads = []
+    ai_calls = []
+    page.on('request', lambda request: ai_calls.append(request.url) if '/api/generate' in request.url else None)
+    png = io.BytesIO()
+    Image.new('RGB', (2, 2), 'green').save(png, format='PNG')
+    image_url = 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode('ascii')
+    def repaint(route):
+        payloads.append(route.request.post_data_json)
+        route.fulfill(json={'status': 'success', 'image_url': image_url})
+    page.route('**/api/restyle_map', repaint)
+    for key, offset in [('End', 500), ('Home', -500)]:
+        page.locator('#labelOffsetX').press(key)
+        assert page.evaluate('getFormState().label_style.offset_x') == offset
+        assert page.locator('#labelOffsetXValue').inner_text() == f'{offset:+d} px'
+        page.click('#restyleCurrentMapBtn')
+        page.wait_for_function('!mapRepaintPending')
+        assert payloads[-1]['label_style']['offset_x'] == offset
+        assert payloads[-1]['map_values'] == VALUES
+    assert not ai_calls
+    page.reload()
+    assert page.locator('#labelOffsetX').input_value() == '-500'
+    page.add_style_tag(content='.hidden {display:none!important}')
+    page.locator('button[onclick="updateLabelOffset(0)"]').click()
+    assert page.evaluate('getFormState().label_style.offset_x') == 0
+
+
+def test_run_history_persists_map_and_settings_without_api_keys(map_page, web):
+    page = map_page
+    image = io.BytesIO()
+    Image.new('RGB', (2, 2), 'purple').save(image, format='PNG')
+    image_url = 'data:image/png;base64,' + base64.b64encode(image.getvalue()).decode()
+    page.evaluate('''async ({image_url, analysis, values}) => {
+        await runHistoryReady;
+        addToHistory({...getFormState(), topic:'Saved map topic', api_key:'do-not-store-in-history',
+                      label_style:{...getFormState().label_style, offset_x:75}}, 'Saved command',
+                     {image_url, analysis, map_values:values});
+        await historyWrites;
+    }''', {'image_url': image_url, 'analysis': web._build_analysis_from_ai(VALUES, mode='text'), 'values': VALUES})
+    saved = page.evaluate('StudioStorage.getHistory()')
+    assert len(saved) == 1
+    assert 'api_key' not in saved[0]['state']
+    assert 'do-not-store-in-history' not in str(saved)
+    page.reload()
+    page.evaluate('async () => { await runHistoryReady; }')
+    page.add_style_tag(content='.hidden {display:none!important}')
+    assert page.locator('#historyCountBadge').inner_text() == '1'
+    page.evaluate("switchBottomTab('history')")
+    page.locator('#historyList > div').first.click()
+    assert page.locator('#topicInput').input_value() == 'Saved map topic'
+    assert page.locator('#serverMapImage').get_attribute('src') == image_url
+    assert page.evaluate('lastMapValues') == VALUES
+    assert page.evaluate('getFormState().label_style.offset_x') == 75
+
+
+def test_history_older_than_one_day_is_deleted_on_open_and_while_open(map_page):
+    page = map_page
+    page.evaluate('''async () => {
+        await runHistoryReady;
+        const state = getFormState(), now = Date.now();
+        await StudioStorage.addHistory({id:'recent', createdAt:now-23*3600000, state, cmd:'Recent'});
+        await StudioStorage.addHistory({id:'expired', createdAt:now-25*3600000, state, cmd:'Expired'});
+    }''')
+    page.reload()
+    page.evaluate('async () => { await runHistoryReady; }')
+    assert page.evaluate('runHistory.map(entry => entry.id)') == ['recent']
+    assert page.evaluate('async () => (await StudioStorage.getHistory()).map(entry => entry.id)') == ['recent']
+    page.evaluate('''async () => {
+        const later = Date.now() + 2*3600000;
+        Date.now = () => later;
+        pruneRunHistory();
+        await historyWrites;
+    }''')
+    assert page.locator('#historyCountBadge').inner_text() == '0'
+    assert page.evaluate('StudioStorage.getHistory()') == []
+
+
+def test_clear_history_is_persistent_and_late_restore_cannot_resurrect_it(map_page):
+    page = map_page
+    page.evaluate('''async () => {
+        await runHistoryReady;
+        addToHistory(getFormState(), 'Clear this');
+        await historyWrites;
+        const old = [...runHistory];
+        let release;
+        StudioStorage.getHistory = () => new Promise(resolve => release = resolve);
+        const loading = restoreRunHistory();
+        clearHistory();
+        release(old);
+        await loading;
+        await historyWrites;
+    }''')
+    assert page.locator('#historyCountBadge').inner_text() == '0'
+    page.reload()
+    page.evaluate('async () => { await runHistoryReady; }')
+    assert page.evaluate('runHistory.length') == 0
+    assert page.evaluate('StudioStorage.getHistory()') == []
+    page.add_init_script("indexedDB.open = () => { throw new DOMException('Blocked', 'SecurityError'); };")
+    page.reload()
+    page.evaluate('''async () => {
+        await runHistoryReady;
+        addToHistory(getFormState(), 'Memory only');
+        await historyWrites;
+    }''')
+    assert page.locator('#historyCountBadge').inner_text() == '1'
+    assert 'Kept for this visit only' in page.locator('#historyStorageStatus').inner_text()

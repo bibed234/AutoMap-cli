@@ -1,6 +1,7 @@
 import base64
 import io
 from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
 
 import pytest
 
@@ -76,7 +77,9 @@ def test_portrait_render_with_centered_title_and_right_aligned_map(worker, tmp_p
         clip.write_videofile(str(background), fps=30, codec='libx264', logger=None)
     map_file = tmp_path / 'map.png'
     Image.new('RGB', map_size, (0, 255, 0)).save(map_file)
+    render_id = str(uuid4())
     response = worker.app.test_client().post('/api/render_video', json={
+        'render_id': render_id,
         'map_file': base64.b64encode(map_file.read_bytes()).decode(),
         'background_video': base64.b64encode(background.read_bytes()).decode(),
         'video_title': 'Найкрасивіші країни Європи',
@@ -85,6 +88,8 @@ def test_portrait_render_with_centered_title_and_right_aligned_map(worker, tmp_p
         'duration': 1, 'include_audio': False,
     })
     assert response.status_code == 200, response.json
+    progress = worker.app.test_client().get(f'/api/render_progress/{render_id}').json
+    assert progress == {'status': 'success', 'progress': 100, 'phase': 'Complete'}
     assert response.json['download_url'].isascii()
     assert parse_qs(urlsplit(response.json['download_url']).query)['path'] == [response.json['file_path']]
     with VideoFileClip(response.json['file_path']) as result:
@@ -393,3 +398,18 @@ def test_custom_subscribe_stars_and_top_sticker_images_render(worker, tmp_path, 
     else:
         assert np.count_nonzero(yellow_footer) == 0
 
+
+
+def test_new_stickers_have_distinct_offline_artwork_and_generated_variants(worker):
+    kinds = ['mountain', 'volcano', 'island', 'rainbow', 'moon', 'rain', 'robot', 'satellite',
+             'laptop', 'graduation', 'medal', 'cat', 'dog', 'fish', 'burger', 'train']
+    images = []
+    for kind in kinds:
+        image = worker._sticker_image(kind, size=100, effects=False, allow_remote=False)
+        assert image.shape == (100, 100, 4)
+        assert np.any(image[:, :, 3])
+        images.append(image.tobytes())
+        generated = worker._sticker_image('gen_diecut:' + kind, size=100, effects=False, allow_remote=False)
+        assert generated.shape == image.shape
+        assert np.any(generated[:, :, 3])
+    assert len(set(images)) == len(kinds)

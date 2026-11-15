@@ -1,229 +1,316 @@
-# AutoMap-cli (AutoMap v2.0)
+# AutoMap
 
-![Logo](resources/demo/banner.png)
+![AutoMap](resources/demo/banner.png)
 
-**AutoMap** is a map-generating tool. Describe what you want in plain language and AutoMap uses AI to collect the data, then paints it onto a map for you — a coloured, labelled map in seconds.
+AutoMap turns a natural-language topic into a colored, labeled map and can place that map in a short portrait video. It includes a web interface, a command-line interface, and a Python renderer.
 
-It ships with three parts:
+Choose **Google Gemini** or **DeepSeek** for map data. Customize the palette and labels, generate several maps from a CSV file, or open **Video Studio** to combine a map with background footage, a headline, branding, and optional music.
 
-- a **CLI** (`cli.py` / the `automap` command),
-- a **web UI** (a small Flask app in `main.py`),
-- and a Python API (`map.auto_map.auto_map`).
+AI-generated values can be approximate or incorrect. Check the underlying data before publishing a map; a prompt asking for current information does not guarantee verified sources or live web research.
 
-## Features
+## What you can make
 
-AutoMap can render three map types:
+| Map type | Coverage | Appearance |
+| --- | --- | --- |
+| `default` | European countries, with the regions included in the bundled artwork | Filled regions with relief and borders |
+| `flag` | The same European layout | Flag artwork with labels |
+| `world` | Continents | Filled continent regions with relief and borders |
 
-| Map type  | Description                     |
-| --------- | ------------------------------- |
-| `default` | Europe (default map)            |
-| `flag`    | Europe with flag-style borders  |
-| `world`   | World map grouped by continent  |
+Maps support categorical **text** values and **number** values. Numeric palettes preserve decimal values and interval boundaries. Short numeric strings such as `10k`, `2.5M`, and `1B` are understood by numeric coloring and Most/Least calculations.
 
-Data can be shown in two modes:
+The web interface provides:
 
-- **`text`** — categorical values (e.g. `Coffee` → a specific colour).
-- **`number`** — numeric values, coloured by value ranges.
+- Separate **Gemini** and **DeepSeek** sections in the model selector, with independent API keys.
+- Single-map generation and CSV batch generation.
+- **Theme & Style** in the left panel, opening Color Filling Studio for palettes, category rules, numeric intervals, and label styling.
+- Repainting from an existing map's values without another AI request.
+- Palette inspection from an uploaded image. This samples colors; it does not recover the image's underlying country data.
+- PNG downloads, run history, and transfer of the latest generated map to Video Studio.
+- Video Studio at `/studio`, with title previews, custom overlays, music download/upload and trimming, and MP4 rendering.
 
-Optional extras:
+![Example map](resources/demo/map_example.png)
 
-- `show_most_least` — highlight the country/continent with the most and least of a value.
-- `short_form` — shorten large numbers (e.g. `1000000` → `1M`).
+## Quick start with Docker
 
-Here is an example (*default map*):
+Docker Compose starts both required services: the web application and the media worker. The worker image includes FFmpeg, Node.js, and the Python media dependencies.
 
-![Map example](resources/demo/map_example.png)
+```sh
+git clone https://github.com/deltaaa00/AutoMap-cli.git
+cd AutoMap-cli
+git switch dev
+cp example.env .env
+```
 
-## Stack
+Edit `.env`. Configure either API key, both keys, or leave their placeholder values and enter a key in the browser instead. Set your own login credentials before exposing the app to other users.
 
-Libraries AutoMap uses today:
+```dotenv
+GEMINI_API_KEY=your_google_ai_studio_key
+DEEPSEEK_API_KEY=your_deepseek_api_key
+SERVER=TRUE
+WEB_LOGIN=your_username
+WEB_PASSWORD=your_password
+# Optional: use a stable, random signing secret instead of the generated file.
+# WEB_SECRET_KEY=your_long_random_secret
+```
 
-- **AI**
-  - [google-genai](https://github.com/googleapis/python-genai)
-- **Drawing**
-  - [pillow](https://github.com/python-pillow/Pillow)
-- **Web UI**
-  - [flask](https://github.com/pallets/flask)
-- **CLI**
-  - [click](https://github.com/pallets/click)
-  - [rich](https://github.com/Textualize/rich)
-- **Other**
-  - [python-dotenv](https://github.com/theskumar/python-dotenv)
+```sh
+docker compose up --build -d
+```
 
-## Installation
+Open [http://localhost:3000](http://localhost:3000). With `SERVER=TRUE`, sign in using the credentials from `.env`.
 
-To get started with **AutoMap**, follow these steps:
+Useful commands:
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/deltaaa00/auto_map.git
-   cd automap
-   ```
+```sh
+docker compose logs -f web yt-dlp-worker
+docker compose up --build -d    # Apply code, dependency, or configuration changes.
+docker compose down            # Stop and remove containers; retain named volumes.
+```
 
-2. **Set up a virtual environment:**
-   ```bash
-   python -m venv venv
-   # Windows:
-   venv\Scripts\activate
-   # macOS / Linux:
-   source venv/bin/activate
-   ```
+Compose publishes only the web application (`3000` on the host to `5000` in the container). The media worker listens on `8080` inside the private Compose network. Both services use `restart: unless-stopped`.
 
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+The `automap-session` volume retains the generated session secret. The `automap-media` volume stores worker media, which is still subject to expiry cleanup. Removing a volume removes its contents.
 
-   For testing, install `requirements-test.txt` instead. It includes runtime
-   dependencies and test tools. See [tests/README.md](tests/README.md) for test commands.
+## API keys and model selection
 
-4. **Configure your API key:**
-   AutoMap reads `GEMINI_API_KEY` from a `.env` file (see `example.env`).
-   - Copy `example.env` to `.env`.
-   - Get a key from [Google AI Studio](https://aistudio.google.com/apikey).
-   - Set it in `.env`: `GEMINI_API_KEY=your_key_here`.
+Get a key from [Google AI Studio](https://aistudio.google.com/apikey) or the [DeepSeek platform](https://platform.deepseek.com/).
 
-   On Windows/macOS you can also use the helper scripts in `util/` (`key_man.bat`, `key_man.command`) to manage the key.
+| Provider section | Server setting | Built-in default or fallback |
+| --- | --- | --- |
+| Gemini, including available Gemma models | `GEMINI_API_KEY` | Default: `gemini-3.8-flash` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-flash`, `deepseek-v4-pro` |
 
-5. **Optionally customize your filling configuration:**
-   The bundled template is used automatically when `map/filling.json` is absent.
-   Copy it to override the default rules:
-   ```bash
-   cp map/filling.template.json map/filling.json
-   ```
+The web app requests the models available for the active provider's key and keeps built-in options if discovery is unavailable. Model availability, quota, and billing depend on the provider and account. Use `python cli.py make --help` to see the CLI's supported model choices.
 
-## Usage
+Keys can come from the process environment or the project-root `.env` file. Environment settings take precedence over file settings. Compose forwards both provider keys from its launching environment or `.env`.
 
-### Web UI
+In the browser:
 
-Start the Flask server:
+1. Choose a model from the **Gemini** or **DeepSeek** section.
+2. If that provider has no configured server key, enter its key in the displayed field.
+3. The shared key field switches with the selected model. Keys are saved separately in this browser for the next visit: switching providers restores the matching key, and clearing the current provider's field leaves the other saved key untouched.
 
-```bash
+Browser-supplied keys are sent to the application server for the active provider's requests. Server-configured keys are not returned to the browser. Browser persistence requires storage to remain enabled; it is specific to the browser profile and site origin.
+
+DeepSeek uses its official Chat Completions API with JSON output and thinking disabled for map generation. No separate OpenAI SDK is required. API requests have a 45-second timeout and no application-level automatic retry. Map drawing takes additional time. Provider overload, quota limits, invalid credentials, insufficient DeepSeek balance, and timeouts are reported in the interface.
+
+## Run from the source checkout
+
+Use **Python 3.12**, matching the Docker images and test workflow. Keep the repository's `resources/` directory available: the renderer uses its map artwork and fonts.
+
+```sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+For map generation through the CLI, this is enough once an API key is configured. To use the `automap` entry point while keeping assets in the checkout:
+
+```sh
+python -m pip install -e .
+```
+
+For native Video Studio operation, also install FFmpeg and make its executable available on `PATH`. URL audio downloads use the `yt-dlp` executable installed by the requirements; Node.js is also included in the Docker worker for supported download workflows. Docker is the simplest way to run the complete media stack.
+
+To run the web app and worker outside Compose, start them in separate terminals from the project root. Activate the virtual environment in each terminal.
+
+```sh
+# Terminal 1: media worker, default port 8080.
+python yt-dlp_serv.py
+```
+
+```sh
+# Terminal 2: web app, default port 5000.
+export YTDLP_URL=http://127.0.0.1:8080
 python main.py
 ```
 
-Then open <http://127.0.0.1:5000/> in your browser. If no key is found in `.env`, the UI prompts you to paste one; otherwise it uses the key from `.env` automatically.
+On PowerShell, set the worker URL with `$env:YTDLP_URL = 'http://127.0.0.1:8080'`. Open [http://localhost:5000](http://localhost:5000).
 
-With `SERVER=TRUE`, sign in with `deltaaa` / `deltaaa00!`, or set `WEB_LOGIN` and `WEB_PASSWORD` in the environment or `.env` to use your own credentials. Environment values take precedence. The browser remembers your sign-in for up to a year. Changing the credentials invalidates existing sessions. In development mode, pages and APIs open without login.
+Only the exact value **`SERVER=TRUE`** enables production mode: Waitress, debugging off, and web authentication. Other values use Flask's development server with debugging enabled and no login gate. The supplied `example.env` enables production mode.
 
-The entered Google API key, last map topic, and palette are remembered in the same browser. Browser storage must remain enabled to keep these preferences between visits.
+## Web workflow
 
-Open **Theme & Style** in the left panel to choose a map palette in Color Filling
-Studio. Selecting a batch result restores that map's generation settings before
-you repaint it.
+### Generate and style a map
 
-The model list is refreshed for your API key, with an updated offline fallback
-list shared by the web interface and CLI. The default is `gemini-3.8-flash`.
-AI generation uses a 45-second request timeout without automatic retries. If a
-model is overloaded, rate-limited, or times out, the page displays the reason and
-lets you retry or choose another model. Drawing the map takes additional time.
+Choose a model, enter a topic, and select text or numeric mode and a map type. Adjust font size, font, temperature, and the optional feature, then generate.
 
-In Video Studio, use **Or upload your own music** to select an MP3, WAV, M4A, AAC, OGG or FLAC file up to 10 MB. The track is converted to MP3 and can be previewed, cut or used directly in the rendered video. The source track and selected cut are saved in this browser so they remain available after reopening the studio.
+Open **Theme & Style** from the left panel to choose a palette or edit category colors, numeric ranges, and label appearance. **Apply & Re-Paint Current Map** reuses the generated values, so changing colors does not require another AI call. Selecting a batch result restores its generation parameters before repainting it.
 
-Music downloaded from a URL must also fit the 10 MiB MP3 limit. Larger tracks
-are rejected immediately; select a shorter track. Each download has its own ID,
-so matching song titles cannot overwrite another track or reuse an older cut.
+The **Global label position** slider in the main left panel moves all country or
+continent labels horizontally, from −500 to +500 pixels. Negative values move
+left; positive values move right. The value is remembered in this browser. Use
+**Apply & Re-Paint Current Map**, next to the generation controls, to apply the
+shift without another AI request. The slider's **Reset** restores zero offset.
 
-### Running on a server
+The generated map's topic travels with its image into Video Studio and fills the
+video headline automatically. Batch selection and restored history use the topic
+of the selected map. Headlines you edit manually are kept when returning to the
+studio or selecting another generated map.
 
-Install the updated dependencies and set `SERVER=TRUE` in the environment or `.env`, then run `python main.py`. This starts the production Waitress server with debugging disabled. Without `SERVER=TRUE`, the Flask development server runs with debugging enabled. `PORT` defaults to `5000` for the web service and `8080` for the media worker.
+The temperature slider accepts `0`–`2` and defaults to `0.75` in the web UI. It controls sampling where the selected model supports it; it does not ensure factual accuracy, and some models manage sampling themselves.
 
-For Docker, set `SERVER=TRUE` in `.env`, run `docker compose up --build -d`, and open port `3000`. Compose forwards this switch to both services and keeps the media worker private to the Docker network. It passes `WEB_LOGIN`, `WEB_PASSWORD`, `WEB_SECRET_KEY`, and `GEMINI_API_KEY` from your environment or `.env` to the web container. Only the exact value `TRUE` activates production mode.
+The browser remembers API keys, the last topic, and palette preferences. Video Studio also stores selected materials and settings locally. Storage limits or disabled storage can prevent persistence; download important outputs rather than treating browser storage as an archive.
 
-You can use the server's exported environment variables directly; no `.env` file or code changes are required:
+**Run History** is saved in this browser's IndexedDB with map images, values, and
+generation settings, but without API keys. It survives reloads and reopening the
+site. Runs older than 24 hours are removed when the page opens and checked every
+minute while it is open. **Clear History** removes the saved history as well.
 
-```bash
-export SERVER=TRUE
-export WEB_LOGIN='your-username'
-export WEB_PASSWORD='your-password'
-# Optional: export GEMINI_API_KEY='your-key'
-docker compose up -d --build
-```
+### Create a portrait video
 
-Compose reads the environment of the process that launches it. Export these variables in the launching shell, or supply them through the service manager running Compose. Environment values override `.env`. After changing variables, run `docker compose up -d` again to recreate affected containers; `docker compose restart` keeps the old values. Direct `python main.py` launches read the same exported variables.
+1. Generate a map or select a map image in Video Studio.
+2. Supply background footage and a headline.
+3. Optionally download a music track from a supported URL or upload MP3, WAV, M4A, AAC, OGG, or FLAC audio. Uploaded music is converted to MP3.
+4. Use a full track or trim a **1–30 second** segment from an `MM:SS` start time.
+5. Configure title font, size and colors, watermarks, stickers, and other overlays, then render and download the MP4.
 
-Both containers restart automatically after a failure or host reboot, unless manually stopped. For a deployment outside Compose, set `YTDLP_URL` to the worker address (for example `http://127.0.0.1:8080`); its default is `http://yt-dlp-worker:8080`.
+The worker renders a **1080 × 1920** portrait frame. Video duration is limited to **1–30 seconds** and to the available source media. Without selected music, rendering can proceed without audio; background footage's original audio is removed.
 
-Session signing uses a generated secret in `instance/web-session-secret`; retain this file across restarts. Compose stores it in the `automap-session` volume. Alternatively, set a stable, random `WEB_SECRET_KEY` on every instance. Removing the secret file or volume, or changing the secret, requires signing in again. Serve the public site over HTTPS to protect the login and API key in transit.
+The CPU encoder is `libx264`. NVIDIA `h264_nvenc` and macOS `h264_videotoolbox` are selectable only when detected by the worker. Installing an encoder does not guarantee compatible hardware or drivers.
 
-### CLI
+During rendering, a progress bar shows the worker's audio/video encoding progress
+and current phase. It reaches 100% only after the finished MP4 is ready. The
+sticker library also includes mountains, volcanoes, islands, weather, robots,
+satellites, laptops, graduation caps, medals, cats, dogs, fish, burgers, and trains;
+these have offline artwork as well as the existing sticker styles.
 
-Generate a map straight from the terminal:
+Maps, background footage, audio, and custom overlay materials have a **10 MiB per-material limit**. URL downloads are also rejected if the resulting MP3 exceeds that limit. A long track may therefore need to be replaced with a shorter source. Each audio download has a unique identifier, independent of its display title.
 
-```bash
+Worker files older than approximately **30 minutes** are cleaned up when relevant operations run. Download completed videos promptly. Browser-restored inline audio can keep a selected track usable after worker files have expired, subject to browser storage availability.
+
+## Command-line usage
+
+Run commands from the repository root:
+
+```sh
 python cli.py make "Population of European countries" -m number -mp default
+python cli.py make "Most popular hot drink by country" -m text --model deepseek-flash
+python cli.py make "GDP per capita by country" -m number -eop show_most_least --temperature 0.4
 ```
 
-Flags:
+`make` saves `result.png` in the repository root, replacing an existing result. `--show` opens the image after generation; it is off by default.
 
-- `-m, --mode` — `text` (default) or `number`
-- `-mp, --map-type` — `default` (default), `flag` or `world`
-- `-gsm, --global-size-modifier` — global font size modifier (default `15`)
-- `-eop, --extra-option` — `none` (default), `show_most_least` or `short_form`
-- `--model` — AI model to use
-- `--temperature` — response randomness from `0` to `2`; omit for the model default. The web slider defaults to `0.75` and remembers your selection. This controls sampling, not factual accuracy.
-- `--font` — font file name from `resources/fonts`
-- `--show/--no-show` — open the result image after generating
-- `-v, --verbose` — print detailed progress output
+| Option | Values or purpose | Default |
+| --- | --- | --- |
+| `-m`, `--mode` | `text`, `number` | `text` |
+| `-mp`, `--map-type` | `default`, `flag`, `world` | `default` |
+| `-gsm`, `--global-size-modifier` | Integer font-size adjustment | `15` |
+| `-eop`, `--extra-option` | `none`, `show_most_least`, `short_form` | `none` |
+| `--model` | Supported model ID; see command help | `gemini-3.8-flash` |
+| `--font` | Bundled `.ttf` or `.otf` filename | `Bips.ttf` |
+| `--key` | Key for the selected model's provider | Provider environment/file key |
+| `--temperature` | Sampling value from `0` to `2`; `make` only | Provider default when omitted |
+| `--show` / `--no-show` | Open the generated image; `make` only | `--no-show` |
+| `-v`, `--verbose` | Detailed progress output | Off |
 
-After installing the package (`pip install -e .`) you can also use the `automap` command:
+`show_most_least` is supported in **numeric mode on Europe maps** (`default` or `flag`). `short_form` asks the model for shortened values such as `1k` or `2M` and is supported in **text mode**. These are mutually exclusive extra options.
 
-```bash
-automap make "Population of European countries" -m number -mp default
+### Batch generation
+
+Start with [batch_template.csv](batch_template.csv), or create a UTF-8 CSV:
+
+```csv
+prompt,mode,map_type,gsm,extra_option,model,font,palette_theme,output
+"Population density in Europe",number,default,15,none,gemini-3.8-flash,Bips.ttf,viridis,europe_density.png
+"Most popular drink in Europe",text,default,15,none,deepseek-flash,Bips.ttf,categorical,europe_drinks.png
 ```
 
-The result is saved as `result.png`.
-
-## Fonts
-
-AutoMap ships with a few default fonts. You can drop your own `.ttf` / `.otf` files into `resources/fonts` and select them on the map.
-
-![Fonts](resources/demo/fonts.png)
-
-## Filling
-
-You can define colours for your data in `map/filling.json`. It contains two dictionaries:
-
-- **`filling_txt`** — colours for `text` mode. For example, if the data is `Tea`, the colour is `(246, 255, 0, 255)`.
-- **`filling_num`** — colours for `number` mode, keyed by value ranges. For example, `(100,200)` means *value > 100 and value <= 200* → `(235, 40, 33, 255)`.
-
-> AutoMap uses **RGBA**. The last number must be `255`.
-
-```json
-{
-    "filling_txt": {
-        "Tea": [246, 255, 0, 255],
-        "Coffee": [54, 4, 4, 255]
-    },
-    "filling_num": {
-        "(100,200)": [235, 40, 33, 255]
-    }
-}
+```sh
+python cli.py batch batch_template.csv -o output_maps
 ```
 
-## Deployment (Vercel)
+Only `prompt` is required. Optional columns are `mode`, `map_type`, `gsm`, `extra_option`, `model`, `font`, `palette_theme`, and `output`. Unknown or duplicate columns and invalid values are rejected. CSV `gsm` must be an integer from `1` to `100`. Blank optional cells use command or web-form defaults.
 
-The web UI can be deployed to Vercel. The repository root contains a `vercel.json` that builds `AutoMap-cli/main.py` with the Python runtime.
+The batch command accepts the shared map/model/font/key/verbosity options above, plus `-o` / `--output-dir` (default: `output_maps`). It does not expose `--temperature` or `--show`. Rows run sequentially. Without `output`, filenames use a row number and a slug of the prompt; an explicit filename is confined to the output directory and given a `.png` extension if needed.
 
-1. Set `GEMINI_API_KEY` under **Project → Settings → Environment Variables** (do **not** commit a `.env`).
-2. Deploy. If no key is configured, the UI simply prompts the visitor for one.
+Mixed-provider CSV files need credentials for each provider. A key entered in the browser or passed through CLI `--key` is applied only to its selected provider; it is not forwarded to the other provider. Configure both server/environment keys for mixed-provider batches.
 
-Note that AI + image generation can be slow, and Vercel's Hobby plan has short function time limits — a paid plan may be needed for larger requests.
+The web interface also accepts CSV ideas files and provides individual PNG downloads. Batch results remain available in the current page's result list and history.
+
+## Filling configuration and Python API
+
+If `map/filling.json` is absent, AutoMap reads the bundled `map/filling.template.json`. To maintain your own default rules:
+
+```sh
+cp map/filling.template.json map/filling.json
+```
+
+`filling_txt` maps text labels to RGBA arrays. `filling_num` maps stringified `(low, high)` pairs to RGBA arrays, using **`low < value <= high`**. Fractional interval boundaries are supported. The web editor can export a filling configuration.
+
+For Python use, the renderer accepts model/key settings, style overrides, and optional supplied values:
+
+```python
+from map.auto_map import auto_map
+
+png = auto_map(
+    prompt="Example values",
+    mode="number",
+    map_type="default",
+    size_mod=15,
+    optional_feature="show_most_least",
+    model="gemini-3.8-flash",
+    font_name="Bips.ttf",
+    show_result=False,
+    io_res=True,
+    auto_style=True,
+    palette_theme="viridis",
+    ai_answer_override={"ukraine": "2M", "poland": 100000},
+)
+if png is not None:
+    with open("example.png", "wb") as output:
+        output.write(png.getvalue())
+```
+
+`ai_answer_override` bypasses AI entirely. With `io_res=True`, a successful call returns a PNG `BytesIO` buffer; otherwise it saves and returns the path to `result.png`. Omitted countries or continents are not populated by this example.
+
+## Server configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `GEMINI_API_KEY` | Server key for Gemini/Gemma models |
+| `DEEPSEEK_API_KEY` | Server key for DeepSeek models |
+| `SERVER` | Exact `TRUE` enables Waitress and web authentication |
+| `WEB_LOGIN` | Login name; default `deltaaa` |
+| `WEB_PASSWORD` | Login password; default `deltaaa00!` |
+| `WEB_SECRET_KEY` | Optional stable session-signing secret |
+| `WEB_AUTH_SECRET_FILE` | Native deployment override for the generated secret file |
+| `PORT` | Native service port; web default `5000`, worker default `8080` |
+| `YTDLP_URL` | Web-to-worker URL; default `http://yt-dlp-worker:8080` |
+
+Login sessions are valid for up to a year. Changing the credentials or signing secret invalidates existing sessions. Without `WEB_SECRET_KEY`, a secret is generated in `instance/web-session-secret`; keep that file across native restarts or retain the Compose session volume. For Compose, add an explicit environment entry to use `WEB_AUTH_SECRET_FILE`. Compose already fixes `YTDLP_URL` to the private worker address; edit that entry only if you change the service layout.
+
+Use your own credentials and HTTPS for a public deployment. Keep the media worker private; the web application provides the login gate. After changing Compose environment values, run `docker compose up -d` to recreate affected containers: `docker compose restart` retains the old values.
+
+## Tests
+
+The suite mocks external AI/HTTP downloads and does not require real credentials. It covers map rendering, decimal ranges and extrema, CLI/CSV behavior, provider/key isolation, authentication, service proxies, media handling, and browser interaction. Real software-encoded video rendering is included; live model/YouTube availability and GPU encoders are not tested.
+
+```sh
+python -m pip install -r requirements-test.txt
+python -m playwright install chromium
+python -m pytest --cov --cov-report=term-missing
+```
+
+On Linux, install browser system dependencies with `python -m playwright install --with-deps chromium`. On macOS, browser tests use installed Google Chrome when available, otherwise Playwright Chromium.
+
+```sh
+python -m pytest -m 'not browser'  # Python checks without launching a browser.
+python -m pytest -m browser        # Browser interaction checks only.
+```
+
+The coverage configuration requires **90%** coverage. See [tests/README.md](tests/README.md) for isolation details and test setup. The GitHub Actions workflow runs on pushes and pull requests targeting `main`.
+
+## Troubleshooting
+
+- **AI overload, timeout, or quota error:** retry later or select another available model. Drawing and encoding still take time after the AI response; AutoMap does not guarantee a fixed generation time.
+- **Key input appears for one provider only:** that provider has no server key. Gemini and DeepSeek credentials are independent.
+- **Video or music requests cannot reach the worker:** check `YTDLP_URL` for native launches and inspect `docker compose logs yt-dlp-worker` for Compose.
+- **Audio download or conversion fails:** verify FFmpeg/yt-dlp availability, the source URL's accessibility, and the resulting file size. External sites may change or restrict downloads.
+- **Files or preferences disappear after reopening:** browser storage may be disabled, cleared, or full; worker files also expire. Keep downloaded copies of important material.
+- **A custom font or map asset is missing:** run from the source checkout and retain `resources/fonts/` and `resources/maps/`.
 
 ## License
 
-This project is licensed under the **Apache License 2.0**.
-
-Copyright © 2025-2026 **deltaaa00**.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+[Apache License 2.0](LICENSE).

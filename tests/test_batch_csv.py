@@ -1,8 +1,11 @@
 import io
+import base64
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from PIL import Image
 
 from main import app
 from map.functions import load_ideas_from_file, parse_ideas_content
@@ -138,3 +141,42 @@ def test_index_html_batch_safety_and_studio_sync():
     assert "syncLatestMapToStudioStorage" in html
     assert "selectBtn.textContent" in html
     assert "title=\"${item.prompt" not in html
+
+
+def test_batch_web_search_reaches_renderer():
+    with patch('main.auto_map', return_value=io.BytesIO(b'PNGDATA')) as render:
+        response = app.test_client().post('/api/generate_batch', json={
+            'filename': 'ideas.csv', 'ideas_text': 'prompt\nSearch regression\n',
+            'api_key': 'test-key', 'model': 'deepseek-flash',
+            'web_search': True, 'max_search_requests': 3, 'refresh_ai': True,
+        })
+    assert response.status_code == 200
+    assert response.get_json()['succeeded'] == 1
+    assert render.call_args.kwargs['web_search'] is True
+    assert render.call_args.kwargs['max_search_requests'] == 3
+
+
+def test_batch_zip_archives_data_urls_with_unique_topic_names():
+    image = io.BytesIO()
+    Image.new('RGB', (2, 2), 'blue').save(image, format='PNG')
+    image_url = 'data:image/png;base64,' + base64.b64encode(image.getvalue()).decode()
+    response = app.test_client().post('/api/download_batch_zip', json={'items': [
+        {'prompt': topic, 'image_url': image_url}
+        for topic in ('My topic', 'My topic', 'My topic_2')
+    ]})
+    assert response.status_code == 200
+    assert response.mimetype == 'application/zip'
+    with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+        assert archive.namelist() == ['My_topic.png', 'My_topic_2.png', 'My_topic_2_2.png']
+        assert all(archive.read(name) == image.getvalue() for name in archive.namelist())
+
+
+@pytest.mark.parametrize('image_url', [
+    '/etc/passwd', 'https://example.com/map.png',
+    'data:image/png;base64,!!!', 'data:image/png;base64,bm90IGEgcG5n',
+])
+def test_batch_zip_rejects_invalid_images(image_url):
+    response = app.test_client().post('/api/download_batch_zip', json={
+        'items': [{'prompt': 'Invalid', 'image_url': image_url}],
+    })
+    assert response.status_code == 404
