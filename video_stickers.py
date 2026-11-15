@@ -1,7 +1,10 @@
+import io
 import os
 import re
 
 from video_text import TITLE_FONT_PATH, _with_shadow
+
+STORAGE_DIR = "/tmp/automap_storage"
 
 from sticker_themes import (
     ALLOWED_STICKERS,
