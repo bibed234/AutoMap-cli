@@ -470,6 +470,11 @@
                         <summary class="text-[11px] font-medium text-slate-400 hover:text-slate-200 cursor-pointer select-none">
                             Optional: YouTube Cookies (Netscape format, saved in browser)
                         </summary>
+                        <label for="musicCookiesFileInput" class="mt-2 block text-xs text-slate-300">Upload cookies.txt</label>
+                        <input type="file" id="musicCookiesFileInput" accept=".txt,text/plain"
+                            onchange="handleMusicCookiesUpload(this)"
+                            class="mt-1 block w-full text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-rose-600 file:px-3 file:py-2 file:text-white">
+                        <p id="musicCookiesFileStatus" role="status" class="mt-1 text-[11px] text-slate-400">Choose a Netscape cookies.txt file, or paste its contents below.</p>
                         <textarea id="musicCookiesInput" rows="3"
                             placeholder="# Netscape HTTP Cookie File&#10;.youtube.com&#9;TRUE&#9;/&#9;TRUE&#9;..."
                             class="mt-1.5 w-full px-3 py-2 bg-slate-950/90 border border-slate-700/80 rounded-xl text-[11px] font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-rose-500 transition"></textarea>
@@ -1684,6 +1689,37 @@
                 if (urlInput) urlInput.focus();
                 showToast("Clipboard access blocked — press Ctrl+V to paste", "warn");
                 logToConsole(`[Warning] Clipboard read failed (${err.message}). Paste manually.`, 'warn');
+            }
+        }
+
+        async function handleMusicCookiesUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const button = document.getElementById('musicBtn');
+            const status = document.getElementById('musicCookiesFileStatus');
+            const wasDisabled = button.disabled;
+            button.disabled = true;
+            input.disabled = true;
+            status.textContent = 'Reading cookies file...';
+            try {
+                if (file.size > 1024 * 1024) throw new Error('Cookies file must be smaller than 1 MB.');
+                const contents = (await file.text()).replace(/^\uFEFF/, '').trim();
+                const rows = contents.split(/\r?\n/).filter(line => line.trim() && (!line.startsWith('#') || line.startsWith('#HttpOnly_')));
+                if (!rows.length || rows.some(line => line.split('\t').length !== 7)) {
+                    throw new Error('Please export cookies in Netscape cookies.txt format.');
+                }
+                const textarea = document.getElementById('musicCookiesInput');
+                textarea.value = contents;
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                saveVideoSettings();
+                status.textContent = `Loaded ${file.name}. Cookies are ready for the next download.`;
+            } catch (error) {
+                status.textContent = error.message || 'Could not read the cookies file.';
+                showToast(status.textContent, 'warn');
+            } finally {
+                input.value = '';
+                input.disabled = false;
+                button.disabled = wasDisabled;
             }
         }
 
