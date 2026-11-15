@@ -230,9 +230,17 @@ def music_download():
     # yt-dlp with `-x` writes to a temp file, so pipe through the temp dir and
     # read the produced .mp3 back. `-o -` is unreliable when extracting audio.
 
+    cookies = str(data.get('cookies') or '').strip()
     download_dir = tempfile.mkdtemp(prefix="automap_download_")
+    cookie_args = []
+    if cookies:
+        cookie_path = os.path.join(download_dir, "cookies.txt")
+        with open(cookie_path, "w", encoding="utf-8") as cf:
+            cf.write(cookies + "\n")
+        cookie_args = ["--cookies", cookie_path]
     command = [
         "yt-dlp",
+        *cookie_args,
         "-f", "ba[ext=m4a]/ba",
         "-x",
         "--audio-format", "mp3",
